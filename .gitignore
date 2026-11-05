@@ -1,0 +1,33 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Database files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build files
+build/
+dist/
+wheels/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
