@@ -54,7 +54,15 @@ export function apiPost<T = unknown>(
     body: JSON.stringify(payload),
   });
 }
-
+export function apiPut<T = unknown>(
+  path: string,
+  payload: unknown,
+): Promise<T> {
+  return apiRequest<T>(path, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
 export function asArray(data: any): any[] {
   if (Array.isArray(data)) return data;
 

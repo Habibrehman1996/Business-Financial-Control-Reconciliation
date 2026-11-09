@@ -1,6 +1,7 @@
 
 from datetime import date
 from decimal import Decimal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -13,7 +14,12 @@ from backend.models import (
     InventoryCount,
     InventoryCountLine,
 )
-from backend.schemas import ProductCreate, InventoryCountCreate
+from backend.schemas import (
+    ProductCreate,
+    ProductUpdate,
+    StockAdjustmentCreate,
+    InventoryCountCreate,
+)
 from backend.accounting import (
     get_account_by_code,
     initialize_standard_accounts,
@@ -29,6 +35,10 @@ router = APIRouter(
 )
 
 
+# ---------------------------------------------------------
+# HELPER FUNCTIONS
+# ---------------------------------------------------------
+
 def get_required_account(db: Session, code: str):
     account = get_account_by_code(db, code)
 
@@ -39,6 +49,31 @@ def get_required_account(db: Session, code: str):
 
     return account
 
+
+def get_product_or_404(
+    db: Session,
+    product_id: int,
+    active_only: bool = False,
+):
+    query = db.query(Product).filter(Product.id == product_id)
+
+    if active_only:
+        query = query.filter(Product.is_active.is_(True))
+
+    product = query.with_for_update().first()
+
+    if product is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found.",
+        )
+
+    return product
+
+
+# ---------------------------------------------------------
+# CREATE PRODUCT
+# ---------------------------------------------------------
 
 @router.post(
     "/products",
@@ -52,11 +87,19 @@ def create_product(
         initialize_standard_accounts(db)
 
         sku = payload.sku.strip()
+        name = payload.name.strip()
+        unit = payload.unit.strip() or "piece"
 
         if not sku:
             raise HTTPException(
                 status_code=400,
                 detail="Product SKU is required.",
+            )
+
+        if not name:
+            raise HTTPException(
+                status_code=400,
+                detail="Product name is required.",
             )
 
         if db.query(Product).filter(Product.sku == sku).first():
@@ -85,9 +128,13 @@ def create_product(
 
         product = Product(
             sku=sku,
-            name=payload.name.strip(),
-            description=payload.description,
-            unit=payload.unit,
+            name=name,
+            description=(
+                payload.description.strip()
+                if payload.description
+                else None
+            ),
+            unit=unit,
             purchase_price=purchase_price,
             selling_price=selling_price,
             current_stock=opening_quantity,
@@ -96,7 +143,7 @@ def create_product(
             reorder_level=Decimal("0"),
             unit_cost=purchase_price,
             is_active=True,
-)
+        )
 
         db.add(product)
         db.flush()
@@ -105,6 +152,8 @@ def create_product(
             inventory_account = get_required_account(db, "1200")
             opening_equity_account = get_required_account(db, "3010")
 
+            reference = f"OPENING-STOCK-{product.id}"
+
             db.add(
                 StockMovement(
                     product_id=product.id,
@@ -112,7 +161,7 @@ def create_product(
                     movement_type="adjustment_in",
                     quantity=opening_quantity,
                     unit_cost=purchase_price,
-                    reference=f"OPENING-STOCK-{product.id}",
+                    reference=reference,
                     notes="Initial product stock",
                 )
             )
@@ -122,7 +171,7 @@ def create_product(
                     db,
                     entry_date=date.today(),
                     description=f"Opening stock for product {sku}",
-                    reference=f"OPENING-STOCK-{product.id}",
+                    reference=reference,
                     lines=[
                         {
                             "account_id": inventory_account.id,
@@ -161,6 +210,150 @@ def create_product(
         )
 
 
+# ---------------------------------------------------------
+# EDIT PRODUCT
+# ---------------------------------------------------------
+
+@router.put("/products/{product_id}")
+def update_product(
+    product_id: int,
+    payload: ProductUpdate,
+    db: Session = Depends(get_db),
+):
+    try:
+        product = get_product_or_404(db, product_id)
+
+        updates = payload.model_dump(exclude_unset=True)
+
+        if not updates:
+            raise HTTPException(
+                status_code=400,
+                detail="No product information was provided.",
+            )
+
+        if "sku" in updates:
+            if updates["sku"] is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Product SKU cannot be empty.",
+                )
+
+            sku = updates["sku"].strip()
+
+            if not sku:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Product SKU cannot be empty.",
+                )
+
+            existing = (
+                db.query(Product)
+                .filter(
+                    Product.sku == sku,
+                    Product.id != product_id,
+                )
+                .first()
+            )
+
+            if existing:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Another product already uses this SKU.",
+                )
+
+            product.sku = sku
+
+        if "name" in updates:
+            if updates["name"] is None or not updates["name"].strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Product name cannot be empty.",
+                )
+
+            product.name = updates["name"].strip()
+
+        if "description" in updates:
+            product.description = (
+                updates["description"].strip()
+                if updates["description"]
+                else None
+            )
+
+        if "unit" in updates:
+            if updates["unit"] is None or not updates["unit"].strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Product unit cannot be empty.",
+                )
+
+            product.unit = updates["unit"].strip()
+
+        if "purchase_price" in updates:
+            if updates["purchase_price"] is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Purchase price cannot be empty.",
+                )
+
+            new_purchase_price = money(updates["purchase_price"])
+
+            if new_purchase_price < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Purchase price cannot be negative.",
+                )
+
+            product.purchase_price = new_purchase_price
+
+            # Update the legacy cost field for future operations.
+            # Do not rewrite the average cost of existing stock.
+            product.unit_cost = new_purchase_price
+
+        if "selling_price" in updates:
+            if updates["selling_price"] is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selling price cannot be empty.",
+                )
+
+            new_selling_price = money(updates["selling_price"])
+
+            if new_selling_price < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selling price cannot be negative.",
+                )
+
+            product.selling_price = new_selling_price
+
+        db.commit()
+        db.refresh(product)
+
+        return {
+            "message": "Product updated successfully.",
+            "product": product,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Could not update product. Check whether its SKU already exists.",
+        )
+
+
+# ---------------------------------------------------------
+# LIST PRODUCTS
+# ---------------------------------------------------------
+
 @router.get("/products")
 def list_products(
     search: str | None = None,
@@ -187,25 +380,206 @@ def list_products(
     )
 
 
+# ---------------------------------------------------------
+# GET SINGLE PRODUCT
+# ---------------------------------------------------------
+
 @router.get("/products/{product_id}")
 def get_product(
     product_id: int,
     db: Session = Depends(get_db),
 ):
-    product = (
-        db.query(Product)
-        .filter(Product.id == product_id)
-        .first()
-    )
+    return get_product_or_404(db, product_id)
 
-    if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found.",
+
+# ---------------------------------------------------------
+# STOCK ADJUSTMENT: INCREASE / DECREASE
+# ---------------------------------------------------------
+
+@router.post(
+    "/products/{product_id}/adjustments",
+    status_code=status.HTTP_201_CREATED,
+)
+def adjust_product_stock(
+    product_id: int,
+    payload: StockAdjustmentCreate,
+    db: Session = Depends(get_db),
+):
+    try:
+        initialize_standard_accounts(db)
+
+        product = get_product_or_404(
+            db,
+            product_id,
+            active_only=True,
         )
 
-    return product
+        adjustment_quantity = quantity(payload.quantity)
+        current_stock = quantity(product.current_stock or 0)
 
+        if adjustment_quantity <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Adjustment quantity must be greater than zero.",
+            )
+
+        unit_cost = money(
+            product.average_cost or product.purchase_price or 0
+        )
+
+        if unit_cost < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid product average cost.",
+            )
+
+        adjustment_value = money(
+            adjustment_quantity * unit_cost
+        )
+
+        if payload.adjustment_type == "increase":
+            new_stock = quantity(
+                current_stock + adjustment_quantity
+            )
+            movement_type = "adjustment_in"
+
+        elif payload.adjustment_type == "decrease":
+            if adjustment_quantity > current_stock:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient stock. Available: "
+                        f"{current_stock}, requested: {adjustment_quantity}."
+                    ),
+                )
+
+            new_stock = quantity(
+                current_stock - adjustment_quantity
+            )
+            movement_type = "adjustment_out"
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid stock adjustment type.",
+            )
+
+        unique_reference = (
+            f"STOCK-ADJ-{product.id}-{uuid4().hex[:8].upper()}"
+        )
+
+        external_reference = (
+            payload.reference.strip()
+            if payload.reference and payload.reference.strip()
+            else unique_reference
+        )
+
+        # Synchronize both stock fields.
+        product.current_stock = new_stock
+        product.quantity_on_hand = new_stock
+
+        db.add(
+            StockMovement(
+                product_id=product.id,
+                movement_date=payload.adjustment_date,
+                movement_type=movement_type,
+                quantity=adjustment_quantity,
+                unit_cost=unit_cost,
+                reference=external_reference,
+                notes=payload.notes or "Manual stock adjustment",
+            )
+        )
+
+        # Create accounting entries only when the adjustment
+        # has a positive monetary value.
+        if adjustment_value > 0:
+            inventory_account = get_required_account(db, "1200")
+
+            if payload.adjustment_type == "increase":
+                other_income_account = get_required_account(db, "7000")
+
+                journal_lines = [
+                    {
+                        "account_id": inventory_account.id,
+                        "debit": adjustment_value,
+                        "credit": 0,
+                        "description": f"Stock increase: {product.sku}",
+                    },
+                    {
+                        "account_id": other_income_account.id,
+                        "debit": 0,
+                        "credit": adjustment_value,
+                        "description": f"Stock adjustment gain: {product.sku}",
+                    },
+                ]
+
+            else:
+                adjustment_expense_account = get_required_account(
+                    db, "6010"
+                )
+
+                journal_lines = [
+                    {
+                        "account_id": adjustment_expense_account.id,
+                        "debit": adjustment_value,
+                        "credit": 0,
+                        "description": f"Stock shortage: {product.sku}",
+                    },
+                    {
+                        "account_id": inventory_account.id,
+                        "debit": 0,
+                        "credit": adjustment_value,
+                        "description": f"Stock decrease: {product.sku}",
+                    },
+                ]
+
+            post_journal_entry(
+                db,
+                entry_date=payload.adjustment_date,
+                description=(
+                    f"Stock {payload.adjustment_type} "
+                    f"for {product.name}"
+                ),
+                reference=unique_reference,
+                lines=journal_lines,
+            )
+
+        db.commit()
+        db.refresh(product)
+
+        return {
+            "message": "Stock adjusted successfully.",
+            "product_id": product.id,
+            "sku": product.sku,
+            "previous_stock": current_stock,
+            "adjustment_type": payload.adjustment_type,
+            "adjustment_quantity": adjustment_quantity,
+            "new_stock": new_stock,
+            "unit_cost": unit_cost,
+            "adjustment_value": adjustment_value,
+            "reference": external_reference,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    except IntegrityError as exc:
+        db.rollback()
+        print("STOCK ADJUSTMENT ERROR:", repr(exc.orig))
+        raise HTTPException(
+            status_code=400,
+            detail="Could not save stock adjustment.",
+        )
+
+
+# ---------------------------------------------------------
+# PRODUCT STOCK MOVEMENT HISTORY
+# ---------------------------------------------------------
 
 @router.get("/products/{product_id}/movements")
 def list_product_movements(
@@ -213,17 +587,7 @@ def list_product_movements(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    product = (
-        db.query(Product)
-        .filter(Product.id == product_id)
-        .first()
-    )
-
-    if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Product not found.",
-        )
+    get_product_or_404(db, product_id)
 
     return (
         db.query(StockMovement)
@@ -237,6 +601,10 @@ def list_product_movements(
     )
 
 
+# ---------------------------------------------------------
+# PHYSICAL INVENTORY COUNT
+# ---------------------------------------------------------
+
 @router.post(
     "/counts",
     status_code=status.HTTP_201_CREATED,
@@ -248,7 +616,7 @@ def create_inventory_count(
     try:
         initialize_standard_accounts(db)
 
-        if not payload.items:
+        if not payload.lines:
             raise HTTPException(
                 status_code=400,
                 detail="Inventory count must contain at least one product.",
@@ -259,12 +627,13 @@ def create_inventory_count(
         other_income_account = get_required_account(db, "7000")
 
         prepared_lines = []
+
         total_increase_value = Decimal("0.00")
         total_decrease_value = Decimal("0.00")
 
         seen_product_ids = set()
 
-        for item in payload.items:
+        for item in payload.lines:
             if item.product_id in seen_product_ids:
                 raise HTTPException(
                     status_code=400,
@@ -297,11 +666,14 @@ def create_inventory_count(
                     detail="Counted stock cannot be negative.",
                 )
 
-            system_quantity = quantity(product.current_stock)
-            difference = quantity(counted_quantity - system_quantity)
+            system_quantity = quantity(product.current_stock or 0)
+
+            difference = quantity(
+                counted_quantity - system_quantity
+            )
 
             unit_cost = money(
-                product.average_cost or product.purchase_price
+                product.average_cost or product.purchase_price or 0
             )
 
             if unit_cost < 0:
@@ -310,10 +682,13 @@ def create_inventory_count(
                     detail=f"Invalid stock cost for product {product.sku}.",
                 )
 
-            adjustment_value = money(abs(difference) * unit_cost)
+            adjustment_value = money(
+                abs(difference) * unit_cost
+            )
 
             if difference > 0:
                 total_increase_value += adjustment_value
+
             elif difference < 0:
                 total_decrease_value += adjustment_value
 
@@ -344,9 +719,10 @@ def create_inventory_count(
             product = line["product"]
             difference = line["difference"]
 
+            # Synchronize stock fields.
             product.current_stock = line["counted_quantity"]
+            product.quantity_on_hand = line["counted_quantity"]
 
-            # Model fields are limited to system_quantity and counted_quantity.
             db.add(
                 InventoryCountLine(
                     inventory_count_id=inventory_count.id,
@@ -357,25 +733,37 @@ def create_inventory_count(
             )
 
             if difference != 0:
+                movement_type = (
+                    "adjustment_in"
+                    if difference > 0
+                    else "adjustment_out"
+                )
+
                 db.add(
                     StockMovement(
                         product_id=product.id,
                         movement_date=payload.count_date,
-                        movement_type="adjustment",
-                        quantity=difference,
+                        movement_type=movement_type,
+                        quantity=abs(difference),
                         unit_cost=line["unit_cost"],
                         reference=f"COUNT-{inventory_count.id}",
-                        notes="Inventory physical count adjustment",
+                        notes=(
+                            payload.notes
+                            or "Inventory physical count adjustment"
+                        ),
                     )
                 )
 
         db.flush()
 
+        # Stock increase: Inventory Dr / Other Income Cr
         if total_increase_value > 0:
             post_journal_entry(
                 db,
                 entry_date=payload.count_date,
-                description=f"Inventory count increase #{inventory_count.id}",
+                description=(
+                    f"Inventory count increase #{inventory_count.id}"
+                ),
                 reference=f"COUNT-IN-{inventory_count.id}",
                 lines=[
                     {
@@ -393,11 +781,14 @@ def create_inventory_count(
                 ],
             )
 
+        # Stock decrease: Adjustment Expense Dr / Inventory Cr
         if total_decrease_value > 0:
             post_journal_entry(
                 db,
                 entry_date=payload.count_date,
-                description=f"Inventory count decrease #{inventory_count.id}",
+                description=(
+                    f"Inventory count decrease #{inventory_count.id}"
+                ),
                 reference=f"COUNT-OUT-{inventory_count.id}",
                 lines=[
                     {
@@ -439,13 +830,18 @@ def create_inventory_count(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
 
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
+        print("INVENTORY COUNT ERROR:", repr(exc.orig))
         raise HTTPException(
             status_code=400,
             detail="Could not save inventory count. Check the submitted records.",
         )
 
+
+# ---------------------------------------------------------
+# LIST INVENTORY COUNTS
+# ---------------------------------------------------------
 
 @router.get("/counts")
 def list_inventory_counts(
@@ -463,6 +859,10 @@ def list_inventory_counts(
         .all()
     )
 
+
+# ---------------------------------------------------------
+# GET SINGLE INVENTORY COUNT
+# ---------------------------------------------------------
 
 @router.get("/counts/{count_id}")
 def get_inventory_count(

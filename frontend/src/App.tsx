@@ -5,6 +5,10 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Banknote,
+  Pencil,
+  SlidersHorizontal,
+  History,
+  XCircle,
   Bell,
   Boxes,
   BriefcaseBusiness,
@@ -23,7 +27,7 @@ import {
   ClipboardList,
   AlertCircle,
 } from "lucide-react";
-import { apiGet, apiPost, asArray, formatPKR } from "./api";
+import { apiGet, apiPost, apiPut, asArray, formatPKR } from "./api";
 import "./App.css";
 
 
@@ -322,6 +326,27 @@ function ModulePage({ section }: { section: Section }) {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
+  const [editProduct, setEditProduct] = useState<any>(null);
+  const [adjustmentProduct, setAdjustmentProduct] = useState<any>(null);
+  const [historyProduct, setHistoryProduct] = useState<any>(null);
+  const [movementRows, setMovementRows] = useState<any[]>([]);
+
+  const [editForm, setEditForm] = useState({
+    sku: "",
+    name: "",
+    description: "",
+    unit: "piece",
+    purchase_price: "",
+    selling_price: "",
+  });
+
+  const [adjustmentForm, setAdjustmentForm] = useState({
+    adjustment_date: new Date().toISOString().slice(0, 10),
+    adjustment_type: "increase",
+    quantity: "",
+    reference: "",
+    notes: "",
+  });
 
   const [form, setForm] = useState({
     sku: "",
@@ -412,7 +437,106 @@ function ModulePage({ section }: { section: Section }) {
       setSaving(false);
     }
   }
+    function openEditProduct(product: any) {
+    setEditProduct(product);
+    setEditForm({
+      sku: product.sku ?? "",
+      name: product.name ?? "",
+      description: product.description ?? "",
+      unit: product.unit ?? "piece",
+      purchase_price: String(product.purchase_price ?? 0),
+      selling_price: String(product.selling_price ?? 0),
+    });
+    setError("");
+    setSuccess("");
+  }
 
+  async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editProduct) return;
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      await apiPut(`/api/inventory/products/${editProduct.id}`, {
+        sku: editForm.sku.trim(),
+        name: editForm.name.trim(),
+        description: editForm.description.trim() || null,
+        unit: editForm.unit.trim(),
+        purchase_price: Number(editForm.purchase_price),
+        selling_price: Number(editForm.selling_price),
+      });
+
+      setEditProduct(null);
+      setSuccess("Product updated successfully.");
+      await loadRecords();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update product.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function adjustStock(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustmentProduct) return;
+
+    const quantity = Number(adjustmentForm.quantity);
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Please enter a valid stock quantity.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      await apiPost(
+        `/api/inventory/products/${adjustmentProduct.id}/adjustments`,
+        {
+          ...adjustmentForm,
+          quantity,
+        },
+      );
+
+      setAdjustmentProduct(null);
+      setAdjustmentForm({
+        adjustment_date: new Date().toISOString().slice(0, 10),
+        adjustment_type: "increase",
+        quantity: "",
+        reference: "",
+        notes: "",
+      });
+
+      setSuccess("Stock adjusted successfully.");
+      await loadRecords();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to adjust stock.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openMovementHistory(product: any) {
+    setHistoryProduct(product);
+    setMovementRows([]);
+    setError("");
+
+    try {
+      const result = await apiGet(
+        `/api/inventory/products/${product.id}/movements`,
+      );
+      setMovementRows(asArray(result));
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to load stock history.",
+      );
+    }
+  }
   const filteredRows = rows.filter((row) =>
     JSON.stringify(row).toLowerCase().includes(search.toLowerCase()),
   );
@@ -567,15 +691,248 @@ function ModulePage({ section }: { section: Section }) {
           </label>
         </div>
 
-        {loading ? (
+                {loading ? (
           <div className="empty-state">Loading records...</div>
         ) : error && rows.length === 0 ? (
           <div className="error-message">
             <AlertCircle size={18} />
             <p>{error}</p>
           </div>
+        ) : isInventory ? (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>SKU</th>
+                  <th>Purchase Price</th>
+                  <th>Selling Price</th>
+                  <th>Current Stock</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((product) => (
+                  <tr key={product.id}>
+                    <td>{product.name}</td>
+                    <td>{product.sku}</td>
+                    <td>{formatPKR(product.purchase_price)}</td>
+                    <td>{formatPKR(product.selling_price)}</td>
+                    <td>{product.current_stock ?? product.quantity_on_hand ?? 0}</td>
+                    <td>
+                      <div className="inventory-form-actions">
+                        <button
+                          type="button"
+                          onClick={() => openEditProduct(product)}
+                          title="Edit product"
+                        >
+                          <Pencil size={15} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdjustmentProduct(product)}
+                          title="Adjust stock"
+                        >
+                          <SlidersHorizontal size={15} /> Adjust
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openMovementHistory(product)}
+                          title="Movement history"
+                        >
+                          <History size={15} /> History
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredRows.length === 0 && (
+              <div className="empty-state">No products found.</div>
+            )}
+          </div>
         ) : (
           <RecordsTable rows={filteredRows} />
+        )}
+
+        {isInventory && editProduct && (
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Edit Product</h2>
+                <p>Update product information. Current stock will remain unchanged.</p>
+              </div>
+              <button type="button" onClick={() => setEditProduct(null)}>
+                <XCircle size={18} /> Close
+              </button>
+            </div>
+
+            <form className="inventory-form" onSubmit={saveProduct}>
+              <div className="inventory-form-grid">
+                <label>
+                  Product Name *
+                  <input
+                    required
+                    minLength={2}
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </label>
+                <label>
+                  SKU *
+                  <input
+                    required
+                    value={editForm.sku}
+                    onChange={(e) => setEditForm({ ...editForm, sku: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Unit
+                  <input
+                    value={editForm.unit}
+                    onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Purchase Price (PKR) *
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editForm.purchase_price}
+                    onChange={(e) => setEditForm({ ...editForm, purchase_price: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Selling Price (PKR) *
+                  <input
+                    required
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editForm.selling_price}
+                    onChange={(e) => setEditForm({ ...editForm, selling_price: e.target.value })}
+                  />
+                </label>
+                <label className="inventory-description">
+                  Description
+                  <textarea
+                    rows={3}
+                    value={editForm.description}
+                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="inventory-form-actions">
+                <button type="submit" disabled={saving}>
+                  {saving ? "Updating..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {isInventory && adjustmentProduct && (
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Stock Adjustment</h2>
+                <p>
+                  {adjustmentProduct.name} — Current stock:{" "}
+                  {adjustmentProduct.current_stock ?? adjustmentProduct.quantity_on_hand ?? 0}
+                </p>
+              </div>
+              <button type="button" onClick={() => setAdjustmentProduct(null)}>
+                <XCircle size={18} /> Close
+              </button>
+            </div>
+
+            <form className="inventory-form" onSubmit={adjustStock}>
+              <div className="inventory-form-grid">
+                <label>
+                  Adjustment Date *
+                  <input
+                    required
+                    type="date"
+                    value={adjustmentForm.adjustment_date}
+                    onChange={(e) => setAdjustmentForm({ ...adjustmentForm, adjustment_date: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Adjustment Type *
+                  <select
+                    value={adjustmentForm.adjustment_type}
+                    onChange={(e) => setAdjustmentForm({ ...adjustmentForm, adjustment_type: e.target.value })}
+                  >
+                    <option value="increase">Increase Stock</option>
+                    <option value="decrease">Decrease Stock</option>
+                  </select>
+                </label>
+                <label>
+                  Quantity *
+                  <input
+                    required
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    value={adjustmentForm.quantity}
+                    onChange={(e) => setAdjustmentForm({ ...adjustmentForm, quantity: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Reference
+                  <input
+                    value={adjustmentForm.reference}
+                    onChange={(e) => setAdjustmentForm({ ...adjustmentForm, reference: e.target.value })}
+                    placeholder="Optional reference"
+                  />
+                </label>
+                <label className="inventory-description">
+                  Notes
+                  <textarea
+                    rows={3}
+                    value={adjustmentForm.notes}
+                    onChange={(e) => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })}
+                    placeholder="Reason for stock adjustment"
+                  />
+                </label>
+              </div>
+              <div className="inventory-form-actions">
+                <button type="submit" disabled={saving}>
+                  {saving ? "Processing..." : "Save Stock Adjustment"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {isInventory && historyProduct && (
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Stock Movement History</h2>
+                <p>{historyProduct.name} — SKU: {historyProduct.sku}</p>
+              </div>
+              <button type="button" onClick={() => setHistoryProduct(null)}>
+                <XCircle size={18} /> Close
+              </button>
+            </div>
+            {movementRows.length > 0 ? (
+              <RecordsTable rows={movementRows} />
+            ) : (
+              <div className="empty-state">No stock movements found.</div>
+            )}
+          </section>
+        )}
+
+        {success && <p className="inventory-success">{success}</p>}
+        {error && (
+          <div className="error-message">
+            <AlertCircle size={18} />
+            <p>{error}</p>
+          </div>
         )}
 
         <div className="endpoint-note">
