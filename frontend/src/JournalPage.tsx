@@ -1,6 +1,13 @@
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Save, RefreshCw, BookOpen } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Save,
+  RefreshCw,
+  BookOpen,
+  RotateCcw,
+} from "lucide-react";
 import { apiGet, apiPost, asArray, formatPKR } from "./api";
 
 type Account = {
@@ -25,6 +32,8 @@ type JournalEntry = {
   description: string;
   reference: string | null;
   status: string;
+  source_type: string;
+  reversal_of_id: number | null;
   lines: {
     id: number;
     account_id: number;
@@ -63,7 +72,12 @@ export default function JournalPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
+  const [reversingId, setReversingId] = useState<number | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [reversalFilter, setReversalFilter] = useState("all");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const totalDebit = useMemo(
     () => lines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0),
     [lines],
@@ -77,7 +91,46 @@ export default function JournalPage() {
   const balanced =
     totalDebit > 0 &&
     Math.abs(totalDebit - totalCredit) < 0.000001;
+  const filteredEntries = useMemo(() => {
+  return entries.filter((entry) => {
+    const search = searchTerm.trim().toLowerCase();
 
+    const matchesSearch =
+      !search ||
+      entry.entry_number.toLowerCase().includes(search) ||
+      entry.description.toLowerCase().includes(search) ||
+      (entry.reference || "").toLowerCase().includes(search);
+
+    const matchesSource =
+      sourceFilter === "all" || entry.source_type === sourceFilter;
+
+    const hasBeenReversed = entries.some(
+      (item) => item.reversal_of_id === entry.id
+    );
+
+    const isReversal = entry.reversal_of_id !== null;
+
+    const matchesReversal =
+      reversalFilter === "all" ||
+      (reversalFilter === "reversed" && hasBeenReversed) ||
+      (reversalFilter === "not_reversed" && !hasBeenReversed && !isReversal) ||
+      (reversalFilter === "reversal_entry" && isReversal);
+
+    const matchesStartDate =
+      !startDate || entry.entry_date >= startDate;
+
+    const matchesEndDate =
+      !endDate || entry.entry_date <= endDate;
+
+    return (
+      matchesSearch &&
+      matchesSource &&
+      matchesReversal &&
+      matchesStartDate &&
+      matchesEndDate
+    );
+  });
+}, [entries, searchTerm, sourceFilter, reversalFilter, startDate, endDate]);
   async function loadData() {
     setLoading(true);
     setError("");
@@ -208,7 +261,38 @@ export default function JournalPage() {
       setSaving(false);
     }
   }
+  async function reverseEntry(entry: JournalEntry) {
+    const confirmed = window.confirm(
+      `Are you sure you want to reverse journal entry ${entry.entry_number}? This action cannot be undone.`
+    );
 
+    if (!confirmed) return;
+
+    setError("");
+    setSuccess("");
+    setReversingId(entry.id);
+
+    try {
+      const result = await apiPost<JournalEntry>(
+        `/api/journal/${entry.id}/reverse`,
+        {}
+      );
+
+      await loadData();
+
+      setSuccess(
+        `Journal entry ${entry.entry_number} successfully reversed. Reversal: ${result.entry_number}.`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to reverse journal entry."
+      );
+    } finally {
+      setReversingId(null);
+    }
+  }
   function accountName(accountId: number) {
     const account = accounts.find((item) => item.id === accountId);
     return account
@@ -435,34 +519,140 @@ export default function JournalPage() {
             <p>{entries.length} entries available</p>
           </div>
         </div>
+                <div className="journal-filters">
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search entry number, description or reference..."
+          />
 
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+          >
+            <option value="all">All Sources</option>
+            <option value="manual">Manual Entries</option>
+            <option value="system">System Generated</option>
+          </select>
+
+          <select
+            value={reversalFilter}
+            onChange={(e) => setReversalFilter(e.target.value)}
+          >
+            <option value="all">All Reversal Status</option>
+            <option value="reversed">Reversed Original Entries</option>
+            <option value="not_reversed">Not Reversed</option>
+            <option value="reversal_entry">Reversal Entries</option>
+          </select>
+
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            aria-label="Start date"
+          />
+
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            aria-label="End date"
+          />
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setSearchTerm("");
+              setSourceFilter("all");
+              setReversalFilter("all");
+              setStartDate("");
+              setEndDate("");
+            }}
+          >
+            Clear Filters
+          </button>
+        </div>
         {loading ? (
           <div className="empty-state">Loading journal records...</div>
         ) : entries.length === 0 ? (
           <div className="empty-state">No posted journal entries found.</div>
+                ) : filteredEntries.length === 0 ? (
+          <div className="empty-state">
+            No journal entries match the selected filters.
+          </div>
         ) : (
           <div className="journal-record-list">
-            {entries.map((entry) => {
+            {filteredEntries.map((entry) => {
               const debit = entry.lines.reduce(
                 (sum, line) => sum + Number(line.debit || 0),
                 0,
+              );
+              const hasBeenReversed = entries.some(
+                (item) => item.reversal_of_id === entry.id
               );
 
               return (
                 <article className="journal-record" key={entry.id}>
                   <div className="journal-record-top">
                     <div>
+                      
                       <strong>{entry.entry_number}</strong>
                       <span>{entry.entry_date}</span>
                     </div>
-                    <span className="journal-posted">{entry.status}</span>
-                  </div>
+                    
+                    <div className="journal-record-controls">
+                      <span className="journal-posted">{entry.status}</span>
 
+                      {entry.source_type === "manual" &&
+                        entry.status === "posted" &&
+                        entry.reversal_of_id === null &&
+                        !hasBeenReversed && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => void reverseEntry(entry)}
+                            disabled={reversingId === entry.id}
+                          >
+                            <RotateCcw size={15} />
+                            {reversingId === entry.id ? "Reversing..." : "Reverse"}
+                          </button>
+                        )}
+                        
+
+                      {hasBeenReversed && (
+                        <span className="journal-posted">Reversed</span>
+                      )}
+                  </div>
+                  </div>
+                  
+                  
                   <p>{entry.description}</p>
 
-                  {entry.reference && (
-                    <small>Reference: {entry.reference}</small>
-                  )}
+                  <div className="journal-audit-info">
+                <small>
+                  Source: {entry.source_type === "manual" ? "Manual Entry" : "System Generated"}
+                </small>
+
+                {entry.reference && (
+                  <small>Reference: {entry.reference}</small>
+                )}
+
+                {entry.reversal_of_id !== null && (
+                  <small>
+                    Reversal of Entry ID: #{entry.reversal_of_id}
+                  </small>
+                )}
+
+                {entries.some((item) => item.reversal_of_id === entry.id) && (
+                  <small>
+                    Reversed by: {
+                      entries.find((item) => item.reversal_of_id === entry.id)?.entry_number
+                    }
+                  </small>
+                )}
+              </div>
 
                   <div className="journal-record-bottom">
                     <span>{entry.lines.length} lines</span>
@@ -488,5 +678,6 @@ export default function JournalPage() {
         )}
       </section>
     </div>
+    
   );
 }

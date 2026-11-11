@@ -106,6 +106,7 @@ def post_journal_entry(
         description=description.strip(),
         reference=reference.strip() if reference else None,
         status="posted",
+        source_type=source_type,
     )
 
     db.add(entry)

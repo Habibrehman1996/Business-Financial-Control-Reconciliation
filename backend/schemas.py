@@ -85,6 +85,7 @@ class JournalLineRead(ORMBase):
     description: str | None
 
 
+
 class JournalEntryRead(ORMBase):
     id: int
     entry_number: str
@@ -92,7 +93,10 @@ class JournalEntryRead(ORMBase):
     description: str
     reference: str | None
     status: str
+    source_type: str
+    reversal_of_id: int | None
     lines: list[JournalLineRead]
+
 
 
 # BANK
