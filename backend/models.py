@@ -81,6 +81,11 @@ class JournalEntry(Base):
     reference: Mapped[str | None] = mapped_column(
         String(100), nullable=True
     )
+    source_type: Mapped[str] = mapped_column(
+        String(20),
+        default="system",
+        nullable=False,
+    )
     status: Mapped[str] = mapped_column(
         String(20), default="posted", nullable=False
     )
@@ -93,7 +98,19 @@ class JournalEntry(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+    reversal_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("journal_entries.id"),
+        nullable=True,
+        unique=True,
+    )
 
+    reversal_of = relationship(
+        "JournalEntry",
+        remote_side="JournalEntry.id",
+        foreign_keys=[reversal_of_id],
+        backref="reversed_by",
+        uselist=False,
+    )
     lines = relationship(
         "JournalLine",
         back_populates="journal_entry",

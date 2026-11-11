@@ -73,8 +73,47 @@ def get_db():
 
 
 # Initialize database tables
+
 def init_db():
-    # Import models so SQLAlchemy registers all tables
+    # Import models so SQLAlchemy registers all tables.
     from backend import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+
+    # Safely migrate existing SQLite journal_entries table.
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(journal_entries)"
+                ).fetchall()
+            }
+
+            if "reversal_of_id" not in columns:
+                connection.exec_driver_sql(
+                    """
+                    ALTER TABLE journal_entries
+                    ADD COLUMN reversal_of_id INTEGER
+                    REFERENCES journal_entries(id)
+                    """
+                )
+
+            if "source_type" not in columns:
+                connection.exec_driver_sql(
+                    """
+                    ALTER TABLE journal_entries
+                    ADD COLUMN source_type VARCHAR(20)
+                    NOT NULL DEFAULT 'system'
+                    """
+                )
+
+            connection.exec_driver_sql(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                ux_journal_entries_reversal_of_id
+                ON journal_entries(reversal_of_id)
+                """
+            )
+
+

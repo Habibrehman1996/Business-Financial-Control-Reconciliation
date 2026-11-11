@@ -18,6 +18,7 @@ def post_journal_entry(
     description: str,
     lines: list[dict],
     reference: str | None = None,
+    source_type: str = "system",
 ) -> JournalEntry:
     """
     Validate and create a balanced, posted journal entry.
