@@ -7,8 +7,10 @@ import {
   RefreshCw,
   BookOpen,
   RotateCcw,
+  Download,
 } from "lucide-react";
 import { apiGet, apiPost, asArray, formatPKR } from "./api";
+import * as XLSX from "xlsx";
 
 type Account = {
   id: number;
@@ -293,6 +295,138 @@ export default function JournalPage() {
       setReversingId(null);
     }
   }
+    function exportJournalCSV() {
+    if (filteredEntries.length === 0) {
+      setError("No journal records available to export.");
+      return;
+    }
+
+    const headers = [
+      "Entry Number",
+      "Date",
+      "Description",
+      "Reference",
+      "Source",
+      "Status",
+      "Reversal Of ID",
+      "Account Code & Name",
+      "Line Description",
+      "Debit",
+      "Credit",
+    ];
+
+    const rows = filteredEntries.flatMap((entry) =>
+      entry.lines.map((line) => {
+        const account = accounts.find(
+          (item) => item.id === line.account_id
+        );
+
+        return [
+          entry.entry_number,
+          entry.entry_date,
+          entry.description,
+          entry.reference || "",
+          entry.source_type,
+          entry.status,
+          entry.reversal_of_id ?? "",
+          account
+            ? `${account.code} - ${account.name}`
+            : `Account #${line.account_id}`,
+          line.description || "",
+          line.debit,
+          line.credit,
+        ];
+      })
+    );
+
+    const escapeCSV = (value: string | number) =>
+      `"${String(value).replace(/"/g, '""')}"`;
+
+    const csvContent = [
+      headers.map(escapeCSV).join(","),
+      ...rows.map((row) => row.map(escapeCSV).join(",")),
+    ].join("\r\n");
+
+    const blob = new Blob(["\uFEFF", csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `journal-entries-${today()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setSuccess("Journal CSV exported successfully.");
+    setError("");
+  }
+    function exportJournalExcel() {
+    if (filteredEntries.length === 0) {
+      setError("No journal records available to export.");
+      return;
+    }
+
+    const rows = filteredEntries.flatMap((entry) =>
+      entry.lines.map((line) => ({
+        "Entry Number": entry.entry_number,
+        Date: entry.entry_date,
+        Description: entry.description,
+        Reference: entry.reference || "",
+        Source:
+          entry.source_type === "manual"
+            ? "Manual Entry"
+            : "System Generated",
+        Status: entry.status,
+        "Reversal Of ID": entry.reversal_of_id ?? "",
+        "Account Code": accounts.find(
+          (item) => item.id === line.account_id
+        )?.code || "",
+        "Account Name": accounts.find(
+          (item) => item.id === line.account_id
+        )?.name || `Account #${line.account_id}`,
+        "Line Description": line.description || "",
+        Debit: Number(line.debit || 0),
+        Credit: Number(line.credit || 0),
+      }))
+    );
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+
+    worksheet["!cols"] = [
+      { wch: 22 },
+      { wch: 14 },
+      { wch: 35 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 15 },
+      { wch: 25 },
+      { wch: 30 },
+      { wch: 16 },
+      { wch: 16 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      "Journal Entries"
+    );
+
+    XLSX.writeFile(
+      workbook,
+      `journal-entries-${today()}.xlsx`
+    );
+
+    setSuccess("Journal Excel file exported successfully.");
+    setError("");
+  }
   function accountName(accountId: number) {
     const account = accounts.find((item) => item.id === accountId);
     return account
@@ -513,11 +647,31 @@ export default function JournalPage() {
       </form>
 
       <section className="panel journal-records">
-        <div className="panel-heading">
+                <div className="panel-heading">
           <div>
             <h2>Posted Journal Records</h2>
-            <p>{entries.length} entries available</p>
+            <p>{filteredEntries.length} of {entries.length} entries shown</p>
           </div>
+
+                    <button
+            type="button"
+            className="secondary-button"
+            onClick={exportJournalCSV}
+            disabled={loading || filteredEntries.length === 0}
+          >
+            <Download size={16} />
+            Export CSV
+          </button>
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={exportJournalExcel}
+            disabled={loading || filteredEntries.length === 0}
+          >
+            <Download size={16} />
+            Export Excel
+          </button>
         </div>
                 <div className="journal-filters">
           <input

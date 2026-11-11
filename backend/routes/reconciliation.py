@@ -1,4 +1,4 @@
-
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ def calculate_reconciliation(
     account_type: str,
     account_id: int,
     statement_closing_balance,
+    statement_date: date,
 ):
     if account_type == "bank":
         account = (
@@ -51,7 +52,7 @@ def calculate_reconciliation(
     book_balance = get_account_balance(
     db,
     account.ledger_account_id,
-    as_of_date=payload.statement_date,
+    as_of_date=statement_date,
 )
 
     statement_balance = money(statement_closing_balance)
@@ -79,6 +80,7 @@ def reconcile_bank(
                 account_type="bank",
                 account_id=payload.account_id,
                 statement_closing_balance=payload.statement_closing_balance,
+                statement_date=payload.statement_date,
             )
         )
 
