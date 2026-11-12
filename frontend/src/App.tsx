@@ -1,3 +1,4 @@
+import ReconciliationPage from "./ReconciliationPage";
 import JournalPage from "./JournalPage";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -26,8 +27,10 @@ import {
   BookOpen,
   ClipboardList,
   AlertCircle,
+  Scale,
+  
 } from "lucide-react";
-import { apiGet, apiPost, apiPut, asArray, formatPKR } from "./api";
+import { apiGet, apiPost, apiPut, asArray, formatPKR,  } from "./api";
 import "./App.css";
 
 
@@ -42,8 +45,8 @@ type Section =
   | "Inventory"
   | "Expenses"
   | "Journal"
-  | "Reports";
-
+  | "Reports"
+  | "Reconciliation";
 const navigation = [
   { name: "Overview", icon: LayoutDashboard },
   { name: "Banking", icon: Banknote, endpoint: "/api/bank/accounts" },
@@ -55,6 +58,7 @@ const navigation = [
   { name: "Inventory", icon: Boxes, endpoint: "/api/inventory/products" },
   { name: "Expenses", icon: ClipboardList, endpoint: "/api/expenses" },
   { name: "Journal", icon: BookOpen, endpoint: "/api/journal" },
+  { name: "Reconciliation", icon: Scale },
   { name: "Reports", icon: FileBarChart, endpoint: "/api/reports/trial-balance" },
 ] as const;
 
@@ -1035,11 +1039,13 @@ export default function App() {
 
         <div className="page-content">
           {active === "Overview" ? (
-          <Overview onNavigate={navigate} />
+            <Overview onNavigate={navigate} />
           ) : active === "Journal" ? (
-          <JournalPage />
+            <JournalPage />
+          ) : active === "Reconciliation" ? (
+            <ReconciliationPage />
           ) : (
-          <ModulePage section={active} />
+            <ModulePage section={active} />
           )}
         </div>
 

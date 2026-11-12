@@ -198,6 +198,19 @@ class CashAccount(Base):
     )
     opening_balance: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.00"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    
 
     ledger_account = relationship("Account")
     transactions = relationship(

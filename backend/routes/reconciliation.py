@@ -124,6 +124,7 @@ def reconcile_cash(
                 db=db,
                 account_type="cash",
                 account_id=payload.account_id,
+                statement_date=payload.statement_date,
                 statement_closing_balance=payload.statement_closing_balance,
             )
         )
