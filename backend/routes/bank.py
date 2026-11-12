@@ -1,4 +1,8 @@
+import csv
+import hashlib
+import io
 
+from fastapi import File, UploadFile
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -6,7 +10,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
-from backend.models import Account, BankAccount, BankTransaction
+from backend.schemas import (
+    BankAccountCreate,
+    BankAccountRead,
+    BankTransactionCreate,
+    BankTransactionRead,
+    BankStatementImportResponse,
+    BankStatementLineRead,
+)
 from backend.schemas import (
     BankAccountCreate,
     BankAccountRead,

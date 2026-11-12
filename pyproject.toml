@@ -12,6 +12,7 @@ dependencies = [
     "langchain-google-genai>=4.4.2",
     "pydantic-settings>=2.16.2",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.33",
     "sqlalchemy>=2.1.6",
     "uvicorn[standard]>=0.54.0",
 ]
