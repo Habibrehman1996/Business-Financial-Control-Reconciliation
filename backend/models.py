@@ -186,8 +186,94 @@ class BankTransaction(Base):
     )
 
     bank_account = relationship("BankAccount", back_populates="transactions")
+class BankStatementLine(Base):
+    __tablename__ = "bank_statement_lines"
 
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
 
+    bank_account_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=False
+    )
+
+    transaction_date: Mapped[date] = mapped_column(
+        Date, nullable=False
+    )
+
+    description: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+
+    reference: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+
+    amount: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+
+    direction: Mapped[str] = mapped_column(
+        String(10), nullable=False
+    )
+
+    statement_balance: Mapped[Decimal | None] = mapped_column(
+        MONEY, nullable=True
+    )
+
+    matched_bank_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_transactions.id"),
+        nullable=True,
+        unique=True,
+    )
+
+    match_status: Mapped[str] = mapped_column(
+        String(20), default="unmatched", nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    bank_account = relationship("BankAccount")
+
+    matched_bank_transaction = relationship(
+        "BankTransaction",
+        foreign_keys=[matched_bank_transaction_id],
+    )
+
+class BankStatementImport(Base):
+    __tablename__ = "bank_statement_imports"
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
+
+    bank_account_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=False
+    )
+
+    filename: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+
+    file_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bank_account_id",
+            "file_hash",
+            name="uq_bank_statement_import_account_hash",
+        ),
+    )
+
+    bank_account = relationship("BankAccount")
 class CashAccount(Base):
     __tablename__ = "cash_accounts"
 

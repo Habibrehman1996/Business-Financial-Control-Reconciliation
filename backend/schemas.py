@@ -141,7 +141,26 @@ class BankTransactionRead(ORMBase):
     direction: str
     source: str
     is_reconciled: bool
+    
+class BankStatementImportResponse(BaseModel):
+    message: str
+    bank_account_id: int
+    imported_count: int
+    duplicate_count: int
+    skipped_count: int
 
+
+class BankStatementLineRead(ORMBase):
+    id: int
+    bank_account_id: int
+    transaction_date: date
+    description: str
+    reference: str | None
+    amount: Decimal
+    direction: str
+    statement_balance: Decimal | None
+    matched_bank_transaction_id: int | None
+    match_status: str
 
 # CASH
 
