@@ -1,0 +1,3 @@
+﻿date,description,amount,direction,reference,balance
+2026-11-01,Customer payment,10000.00,in,REF001,10000.00
+2026-11-02,Office rent,5000.00,out,REF002,5000.00

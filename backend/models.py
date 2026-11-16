@@ -184,7 +184,12 @@ class BankTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
     )
-
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
     bank_account = relationship("BankAccount", back_populates="transactions")
 class BankStatementLine(Base):
     __tablename__ = "bank_statement_lines"

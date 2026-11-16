@@ -162,6 +162,24 @@ class BankStatementLineRead(ORMBase):
     matched_bank_transaction_id: int | None
     match_status: str
 
+
+class BankStatementMatchCandidate(BaseModel):
+    bank_transaction: BankTransactionRead
+    confidence: Literal["high", "medium"]
+    match_reasons: list[str]
+
+
+class BankStatementMatchPreview(BaseModel):
+    statement_line_id: int
+    match_status: Literal[
+        "already_matched",
+        "no_match",
+        "single_candidate",
+        "multiple_candidates",
+    ]
+    candidates: list[BankStatementMatchCandidate]
+class BankStatementManualMatch(BaseModel):
+    bank_transaction_id: int = Field(gt=0)
 # CASH
 
 class CashAccountCreate(BaseModel):

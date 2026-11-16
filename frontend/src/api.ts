@@ -2,19 +2,7 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-async function apiRequest<T = unknown>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
-
+async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
 
   let data: any = null;
@@ -39,6 +27,22 @@ async function apiRequest<T = unknown>(
   return data as T;
 }
 
+async function apiRequest<T = unknown>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  return parseResponse<T>(response);
+}
+
 export function apiGet<T = unknown>(path: string): Promise<T> {
   return apiRequest<T>(path, {
     method: "GET",
@@ -54,6 +58,7 @@ export function apiPost<T = unknown>(
     body: JSON.stringify(payload),
   });
 }
+
 export function apiPut<T = unknown>(
   path: string,
   payload: unknown,
@@ -63,6 +68,26 @@ export function apiPut<T = unknown>(
     body: JSON.stringify(payload),
   });
 }
+
+// Upload files using multipart/form-data.
+export async function apiUpload<T = unknown>(
+  path: string,
+  file: File,
+): Promise<T> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+    },
+    body: formData,
+  });
+
+  return parseResponse<T>(response);
+}
+
 export function asArray(data: any): any[] {
   if (Array.isArray(data)) return data;
 
