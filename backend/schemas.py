@@ -430,3 +430,112 @@ class ReconciliationRead(ORMBase):
     difference: Decimal
     status: str
     notes: str | None
+
+
+# SMART BANK RECONCILIATION ENGINE
+
+
+class SmartReconciliationAdjustment(BaseModel):
+    adjustment_type: Literal[
+        "bank_charges",
+        "bank_interest",
+        "dividend_collected",
+        "dishonoured_cheque",
+        "direct_debit",
+        "cash_book_error",
+        "deposit_in_transit",
+        "unpresented_cheque",
+        "other",
+    ]
+    description: str = Field(min_length=2, max_length=255)
+    amount: Decimal = Field(gt=0)
+
+    effect: Literal[
+        "book_increase",
+        "book_decrease",
+        "timing_increase",
+        "timing_decrease",
+    ]
+
+    counter_account_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_adjustment_effect(self):
+        expected_effects = {
+            "bank_charges": "book_decrease",
+            "bank_interest": "book_increase",
+            "dividend_collected": "book_increase",
+            "dishonoured_cheque": "book_decrease",
+            "direct_debit": "book_decrease",
+            "deposit_in_transit": "timing_increase",
+            "unpresented_cheque": "timing_decrease",
+        }
+
+        expected = expected_effects.get(self.adjustment_type)
+
+        if expected and self.effect != expected:
+            raise ValueError(
+                f"{self.adjustment_type} must use effect '{expected}'."
+            )
+
+        return self
+
+
+
+class SmartReconciliationCreate(BaseModel):
+    account_id: int = Field(gt=0)
+    statement_date: date
+
+    cash_book_balance: Decimal
+    bank_statement_balance: Decimal
+
+    adjustments: list[SmartReconciliationAdjustment] = Field(
+        default_factory=list
+    )
+
+    notes: str | None = None
+
+
+class SmartReconciliationPreview(BaseModel):
+    account_id: int
+    statement_date: date
+
+    original_cash_book_balance: Decimal
+    adjusted_cash_book_balance: Decimal
+
+    original_bank_statement_balance: Decimal
+    adjusted_bank_statement_balance: Decimal
+
+    difference: Decimal
+    status: Literal["matched", "unmatched"]
+
+    book_adjustments_total: Decimal
+    timing_adjustments_total: Decimal
+
+    adjustments: list[SmartReconciliationAdjustment]
+
+
+class SmartReconciliationAdjustmentRead(ORMBase):
+    id: int
+    reconciliation_id: int
+    adjustment_type: str
+    description: str
+    amount: Decimal
+    effect: str
+    counter_account_id: int | None
+    journal_entry_id: int | None
+
+
+class SmartReconciliationRead(ORMBase):
+    id: int
+    bank_account_id: int
+    statement_date: date
+    original_cash_book_balance: Decimal
+    adjusted_cash_book_balance: Decimal
+    original_bank_statement_balance: Decimal
+    adjusted_bank_statement_balance: Decimal
+    difference: Decimal
+    status: str
+    notes: str | None
+    posted_journal_entry_id: int | None
+    adjustments: list[SmartReconciliationAdjustmentRead]

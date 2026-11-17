@@ -1,0 +1,5 @@
+﻿date,description,amount,direction,reference,balance
+2018-12-31,Dividend collected by bank,45000,in,DIV-45000,
+2018-12-31,Note payable paid by bank including interest,16800,out,NOTE-16800,
+2018-12-31,Customer cheque dishonoured,9000,out,CHQ-9000,
+2018-12-31,Customer cheque actual amount,20100,in,CHQ-20100,

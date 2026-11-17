@@ -657,6 +657,114 @@ class ReconciliationRun(Base):
     )
 
 
+class SmartReconciliation(Base):
+    __tablename__ = "smart_reconciliations"
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
+    bank_account_id: Mapped[int] = mapped_column(
+        ForeignKey("bank_accounts.id"), nullable=False
+    )
+    statement_date: Mapped[date] = mapped_column(
+        Date, nullable=False
+    )
+
+    original_cash_book_balance: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+    adjusted_cash_book_balance: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+    original_bank_statement_balance: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+    adjusted_bank_statement_balance: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+
+    difference: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="draft", nullable=False
+    )
+    notes: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+
+    posted_journal_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("journal_entries.id"),
+        nullable=True,
+        unique=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    bank_account = relationship("BankAccount")
+    posted_journal_entry = relationship("JournalEntry")
+
+    adjustments = relationship(
+        "SmartReconciliationAdjustment",
+        back_populates="reconciliation",
+        cascade="all, delete-orphan",
+    )
+
+
+class SmartReconciliationAdjustment(Base):
+    __tablename__ = "smart_reconciliation_adjustments"
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, index=True
+    )
+    reconciliation_id: Mapped[int] = mapped_column(
+        ForeignKey("smart_reconciliations.id"),
+        nullable=False,
+    )
+
+    adjustment_type: Mapped[str] = mapped_column(
+        String(40), nullable=False
+    )
+    description: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False
+    )
+    effect: Mapped[str] = mapped_column(
+        String(30), nullable=False
+    )
+
+    counter_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True
+    )
+
+    journal_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("journal_entries.id"),
+        nullable=True,
+        unique=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    reconciliation = relationship(
+        "SmartReconciliation",
+        back_populates="adjustments",
+    )
+    counter_account = relationship("Account")
+    journal_entry = relationship("JournalEntry")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
