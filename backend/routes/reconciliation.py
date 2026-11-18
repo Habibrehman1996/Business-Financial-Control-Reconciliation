@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -418,7 +418,12 @@ def approve_smart_reconciliation(
             status_code=404,
             detail="Smart reconciliation record not found.",
         )
-
+        # Prevent duplicate approval, including timing-only reconciliations.
+    if reconciliation.approved_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This reconciliation has already been approved.",
+        )
     # Prevent duplicate journal posting.
     if reconciliation.posted_journal_entry_id is not None:
         raise HTTPException(
@@ -472,10 +477,24 @@ def approve_smart_reconciliation(
     ]
 
     if not book_adjustments:
-        raise HTTPException(
-            status_code=400,
-            detail="There are no book adjustments requiring journal posting.",
-        )
+        try:
+            reconciliation.approved_at = datetime.utcnow()
+            db.commit()
+
+            return {
+                "message": "Timing-only reconciliation approved successfully.",
+                "reconciliation_id": reconciliation.id,
+                "reconciliation_status": reconciliation.status,
+                "approval_status": "approved",
+                "posting_status": "not_required",
+                "primary_journal_entry_id": None,
+                "posted_journal_entries": [],
+                "timing_adjustments_posted": 0,
+            }
+
+        except Exception:
+            db.rollback()
+            raise
 
     posted_entries = []
 
@@ -610,6 +629,7 @@ def approve_smart_reconciliation(
 
         # Store the first journal entry as the reconciliation's primary reference.
         reconciliation.posted_journal_entry_id = posted_entries[0].id
+        reconciliation.approved_at = datetime.utcnow()
 
         db.commit()
 

@@ -117,3 +117,18 @@ def init_db():
             )
 
 
+            # Safely migrate existing smart_reconciliations table.
+            smart_reconciliation_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(smart_reconciliations)"
+                ).fetchall()
+            }
+
+            if "approved_at" not in smart_reconciliation_columns:
+                connection.exec_driver_sql(
+                    """
+                    ALTER TABLE smart_reconciliations
+                    ADD COLUMN approved_at DATETIME NULL
+                    """
+                )
