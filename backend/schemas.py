@@ -3,7 +3,14 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+from pydantic import field_validator
 
 
 ZERO = Decimal("0.00")
@@ -57,6 +64,16 @@ class JournalLineInput(BaseModel):
 class JournalEntryCreate(BaseModel):
     entry_date: date
     description: str = Field(min_length=2, max_length=255)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        value = value.strip()
+
+        if len(value) < 2:
+            raise ValueError("Description must contain at least 2 non-space characters.")
+
+        return value
     reference: str | None = None
     lines: list[JournalLineInput] = Field(min_length=2)
 
@@ -458,7 +475,17 @@ class SmartReconciliationAdjustment(BaseModel):
     ]
 
     counter_account_id: int | None = Field(default=None, gt=0)
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        value = value.strip()
 
+        if len(value) < 2:
+            raise ValueError(
+                "Description must contain at least 2 non-space characters."
+            )
+
+        return value
     @model_validator(mode="after")
     def validate_adjustment_effect(self):
         expected_effects = {

@@ -22,6 +22,7 @@ import {
   formatPKR,
 } from "./api";
 import "./App.css";
+import SmartReconciliationPanel from "./SmartReconciliationPanel";
 
 type Account = {
   id: number;
@@ -429,6 +430,7 @@ export default function ReconciliationPage() {
           Refresh
         </button>
       </div>
+            <SmartReconciliationPanel />
 
       {error && (
         <div className="error-message">

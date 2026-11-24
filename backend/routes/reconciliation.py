@@ -205,6 +205,72 @@ def list_reconciliations(
         .all()
     )
 
+@router.get("/smart")
+def list_smart_reconciliations(
+    bank_account_id: int | None = Query(default=None, ge=1),
+    reconciliation_status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    query = db.query(SmartReconciliationModel)
+
+    if bank_account_id is not None:
+        query = query.filter(
+            SmartReconciliationModel.bank_account_id == bank_account_id
+        )
+
+    if reconciliation_status:
+        query = query.filter(
+            SmartReconciliationModel.status == reconciliation_status
+        )
+
+    reconciliations = (
+        query.order_by(
+            SmartReconciliationModel.statement_date.desc(),
+            SmartReconciliationModel.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "id": item.id,
+            "bank_account_id": item.bank_account_id,
+            "bank_account_name": (
+                item.bank_account.name if item.bank_account else None
+            ),
+            "statement_date": item.statement_date,
+            "original_cash_book_balance": item.original_cash_book_balance,
+            "adjusted_cash_book_balance": item.adjusted_cash_book_balance,
+            "original_bank_statement_balance": (
+                item.original_bank_statement_balance
+            ),
+            "adjusted_bank_statement_balance": (
+                item.adjusted_bank_statement_balance
+            ),
+            "difference": item.difference,
+            "status": item.status,
+            "notes": item.notes,
+            "posted_journal_entry_id": item.posted_journal_entry_id,
+            "approved_at": item.approved_at,
+            "created_at": item.created_at,
+            "adjustments": [
+                {
+                    "id": adjustment.id,
+                    "adjustment_type": adjustment.adjustment_type,
+                    "description": adjustment.description,
+                    "amount": adjustment.amount,
+                    "effect": adjustment.effect,
+                    "counter_account_id": adjustment.counter_account_id,
+                    "journal_entry_id": adjustment.journal_entry_id,
+                }
+                for adjustment in item.adjustments
+            ],
+        }
+        for item in reconciliations
+    ]
+
 
 @router.get("/{reconciliation_id}")
 def get_reconciliation(

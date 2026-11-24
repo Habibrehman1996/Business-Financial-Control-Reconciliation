@@ -361,7 +361,13 @@ function ModulePage({ section }: { section: Section }) {
     selling_price: "",
     opening_quantity: "0",
   });
-
+  const [partyForm, setPartyForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    address: "",
+    opening_balance: "0",
+  });
   const loadRecords = useCallback(async () => {
     if (!item || !("endpoint" in item)) {
       setLoading(false);
@@ -455,6 +461,69 @@ function ModulePage({ section }: { section: Section }) {
     setSuccess("");
   }
 
+  async function createParty(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const name = partyForm.name.trim();
+    const openingBalance = Number(partyForm.opening_balance);
+
+    if (
+      name.length < 2 ||
+      !Number.isFinite(openingBalance)
+    ) {
+      setError("Please enter a valid name and opening balance.");
+      return;
+    }
+
+    if (
+      openingBalance !== 0 &&
+      !window.confirm(
+        `You are about to save an opening balance of ${formatPKR(openingBalance)}. This may create a journal entry. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    const endpoint =
+      section === "Customers"
+        ? "/api/parties/customers"
+        : "/api/parties/suppliers";
+
+    setSaving(true);
+
+    try {
+      await apiPost(endpoint, {
+        name,
+        phone: partyForm.phone.trim() || null,
+        email: partyForm.email.trim() || null,
+        address: partyForm.address.trim() || null,
+        opening_balance: openingBalance,
+      });
+
+      setPartyForm({
+        name: "",
+        phone: "",
+        email: "",
+        address: "",
+        opening_balance: "0",
+      });
+
+      setSuccess(
+        `${section === "Customers" ? "Customer" : "Supplier"} created successfully.`,
+      );
+
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : `Unable to create ${section.toLowerCase().slice(0, -1)}.`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editProduct) return;
@@ -546,6 +615,8 @@ function ModulePage({ section }: { section: Section }) {
   );
 
   const isInventory = section === "Inventory";
+  const isParty = section === "Customers" || section === "Suppliers";
+  const partyLabel = section === "Customers" ? "Customer" : "Supplier";
 
   return (
     <>
@@ -556,7 +627,92 @@ function ModulePage({ section }: { section: Section }) {
           <p>Manage and review your business records.</p>
         </div>
       </div>
+          {isParty && (
+        <section className="panel inventory-create-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Add New {partyLabel}</h2>
+              <p>Enter contact details and an optional opening balance.</p>
+            </div>
+          </div>
 
+          <form className="inventory-form" onSubmit={createParty}>
+            <div className="inventory-form-grid">
+              <label>
+                {partyLabel} Name *
+                <input
+                  required
+                  minLength={2}
+                  maxLength={150}
+                  value={partyForm.name}
+                  onChange={(e) =>
+                    setPartyForm({ ...partyForm, name: e.target.value })
+                  }
+                  placeholder={`Enter ${partyLabel.toLowerCase()} name`}
+                />
+              </label>
+
+              <label>
+                Phone
+                <input
+                  type="tel"
+                  value={partyForm.phone}
+                  onChange={(e) =>
+                    setPartyForm({ ...partyForm, phone: e.target.value })
+                  }
+                  placeholder="Optional phone number"
+                />
+              </label>
+
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={partyForm.email}
+                  onChange={(e) =>
+                    setPartyForm({ ...partyForm, email: e.target.value })
+                  }
+                  placeholder="Optional email address"
+                />
+              </label>
+
+              <label>
+                Opening Balance (PKR)
+                <input
+                  type="number"
+                  step="0.01"
+                  value={partyForm.opening_balance}
+                  onChange={(e) =>
+                    setPartyForm({
+                      ...partyForm,
+                      opening_balance: e.target.value,
+                    })
+                  }
+                  placeholder="0"
+                />
+              </label>
+
+              <label className="inventory-description">
+                Address
+                <textarea
+                  rows={3}
+                  value={partyForm.address}
+                  onChange={(e) =>
+                    setPartyForm({ ...partyForm, address: e.target.value })
+                  }
+                  placeholder="Optional address"
+                />
+              </label>
+            </div>
+
+            <div className="inventory-form-actions">
+              <button type="submit" disabled={saving}>
+                {saving ? "Saving..." : `Add ${partyLabel}`}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
       {isInventory && (
         <section className="panel inventory-create-panel">
           <div className="panel-heading">
