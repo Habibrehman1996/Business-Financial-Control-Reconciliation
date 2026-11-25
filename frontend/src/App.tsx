@@ -334,6 +334,32 @@ function ModulePage({ section }: { section: Section }) {
   const [adjustmentProduct, setAdjustmentProduct] = useState<any>(null);
   const [historyProduct, setHistoryProduct] = useState<any>(null);
   const [movementRows, setMovementRows] = useState<any[]>([]);
+  const [salesCustomers, setSalesCustomers] = useState<any[]>([]);
+  const [salesProducts, setSalesProducts] = useState<any[]>([]);
+  const [invoiceForm, setInvoiceForm] = useState({
+    invoice_number: "",
+    customer_id: "",
+    invoice_date: new Date().toISOString().slice(0, 10),
+    due_date: "",
+    tax_amount: "0",
+    notes: "",
+  });
+  const [invoiceItems, setInvoiceItems] = useState<
+    { product_id: string; quantity: string; unit_price: string }[]
+  >([{ product_id: "", quantity: "1", unit_price: "0" }]);
+    // Customer payment data
+  const [salesPayments, setSalesPayments] = useState<any[]>([]);
+  const [cashAccounts, setCashAccounts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+
+  const [paymentForm, setPaymentForm] = useState({
+    invoice_id: "",
+    payment_date: new Date().toISOString().slice(0, 10),
+    amount: "",
+    payment_method: "cash",
+    account_id: "",
+    reference: "",
+  });
 
   const [editForm, setEditForm] = useState({
     sku: "",
@@ -390,7 +416,51 @@ function ModulePage({ section }: { section: Section }) {
   useEffect(() => {
     void loadRecords();
   }, [loadRecords]);
+    useEffect(() => {
+    if (section !== "Sales") return;
 
+    async function loadSalesOptions() {
+      try {
+        const [
+          customersResult,
+          productsResult,
+          paymentsResult,
+          cashResult,
+          bankResult,
+        ] = await Promise.all([
+          apiGet<any>("/api/parties/customers"),
+          apiGet<any>("/api/inventory/products"),
+          apiGet<any>("/api/sales/payments"),
+          apiGet<any>("/api/cash/accounts"),
+          apiGet<any>("/api/bank/accounts"),
+        ]);
+
+        setSalesCustomers(
+          asArray(customersResult).filter(
+            (customer: any) => customer.is_active !== false,
+          ),
+        );
+
+        setSalesProducts(
+          asArray(productsResult).filter(
+            (product: any) => product.is_active !== false,
+          ),
+        );
+
+        setSalesPayments(asArray(paymentsResult));
+        setCashAccounts(asArray(cashResult));
+        setBankAccounts(asArray(bankResult));
+            } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load sales and payment information.",
+        );
+      }
+    }
+
+    void loadSalesOptions();
+  }, [section]);
   async function createProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -442,6 +512,238 @@ function ModulePage({ section }: { section: Section }) {
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Unable to create product.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+      function updateInvoiceItem(
+    index: number,
+    field: "product_id" | "quantity" | "unit_price",
+    value: string,
+  ) {
+    setInvoiceItems((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    );
+  }
+
+  function addInvoiceItem() {
+    setInvoiceItems((current) => [
+      ...current,
+      { product_id: "", quantity: "1", unit_price: "0" },
+    ]);
+  }
+
+  function removeInvoiceItem(index: number) {
+    setInvoiceItems((current) =>
+      current.length > 1
+        ? current.filter((_, itemIndex) => itemIndex !== index)
+        : current,
+    );
+  }
+
+  const invoiceSubtotal = invoiceItems.reduce((total, item) => {
+    const quantity = Number(item.quantity);
+    const price = Number(item.unit_price);
+
+    return total +
+      (Number.isFinite(quantity) && Number.isFinite(price)
+        ? quantity * price
+        : 0);
+  }, 0);
+  const getInvoicePaid = (invoiceId: number) =>
+    salesPayments
+      .filter((payment) => Number(payment.invoice_id) === invoiceId)
+      .reduce((total, payment) => total + Number(payment.amount || 0), 0);
+
+  const getInvoiceOutstanding = (invoice: any) =>
+    Math.max(
+      0,
+      Number(invoice.total_amount || 0) - getInvoicePaid(Number(invoice.id)),
+    );
+
+  const outstandingInvoices = rows.filter(
+    (invoice) =>
+      invoice.status !== "cancelled" &&
+      getInvoiceOutstanding(invoice) > 0,
+  );
+
+  const selectedPaymentInvoice = outstandingInvoices.find(
+    (invoice) => Number(invoice.id) === Number(paymentForm.invoice_id),
+  );
+
+  const selectedPaymentAccounts =
+    paymentForm.payment_method === "cash" ? cashAccounts : bankAccounts;
+  const invoiceTax = Number(invoiceForm.tax_amount) || 0;
+  const invoiceTotal = invoiceSubtotal + invoiceTax;
+  async function recordCustomerPayment(
+    event: React.FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const invoiceId = Number(paymentForm.invoice_id);
+    const amount = Number(paymentForm.amount);
+    const accountId = Number(paymentForm.account_id);
+
+    if (
+      !Number.isInteger(invoiceId) ||
+      invoiceId <= 0 ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      !Number.isInteger(accountId) ||
+      accountId <= 0
+    ) {
+      setError("Please select an invoice, account, and valid payment amount.");
+      return;
+    }
+
+    const invoice = outstandingInvoices.find(
+      (item) => Number(item.id) === invoiceId,
+    );
+
+    if (!invoice) {
+      setError("Selected invoice has no outstanding balance.");
+      return;
+    }
+
+    const outstanding = getInvoiceOutstanding(invoice);
+
+    if (amount > outstanding) {
+      setError(`Payment cannot exceed outstanding balance of ${formatPKR(outstanding)}.`);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Record customer payment of ${formatPKR(amount)} for invoice ${invoice.invoice_number}?\n\nThis will post a journal entry and reduce Accounts Receivable. Continue?`,
+    );
+
+    if (!confirmed) return;
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/sales/payments", {
+        invoice_id: invoiceId,
+        payment_date: paymentForm.payment_date,
+        amount,
+        payment_method: paymentForm.payment_method,
+        bank_account_id:
+          paymentForm.payment_method === "bank" ? accountId : null,
+        cash_account_id:
+          paymentForm.payment_method === "cash" ? accountId : null,
+        reference: paymentForm.reference.trim() || null,
+      });
+
+      setPaymentForm({
+        invoice_id: "",
+        payment_date: new Date().toISOString().slice(0, 10),
+        amount: "",
+        payment_method: "cash",
+        account_id: "",
+        reference: "",
+      });
+
+      const [paymentsResult, invoicesResult] = await Promise.all([
+        apiGet<any>("/api/sales/payments"),
+        apiGet<any>("/api/sales/invoices"),
+      ]);
+
+      setSalesPayments(asArray(paymentsResult));
+      setRows(asArray(invoicesResult));
+
+      setSuccess("Customer payment recorded successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to record customer payment.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function createSalesInvoice(
+    event: React.FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const taxAmount = Number(invoiceForm.tax_amount);
+    const customerId = Number(invoiceForm.customer_id);
+
+    if (
+      !invoiceForm.invoice_number.trim() ||
+      !Number.isInteger(customerId) ||
+      !Number.isFinite(taxAmount) ||
+      taxAmount < 0
+    ) {
+      setError("Please enter a valid invoice number, customer, and tax amount.");
+      return;
+    }
+
+    const validItems = invoiceItems.map((item) => ({
+      product_id: Number(item.product_id),
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unit_price),
+    }));
+
+    if (
+      validItems.some(
+        (item) =>
+          !Number.isInteger(item.product_id) ||
+          item.product_id <= 0 ||
+          !Number.isFinite(item.quantity) ||
+          item.quantity <= 0 ||
+          !Number.isFinite(item.unit_price) ||
+          item.unit_price < 0,
+      )
+    ) {
+      setError("Please select a product and enter valid quantities and prices.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Create invoice ${invoiceForm.invoice_number.trim()} for ${formatPKR(invoiceTotal)}?\n\nThis will deduct inventory stock and post accounting journal entries. This action cannot be treated as a preview. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/sales/invoices", {
+        invoice_number: invoiceForm.invoice_number.trim(),
+        customer_id: customerId,
+        invoice_date: invoiceForm.invoice_date,
+        due_date: invoiceForm.due_date || null,
+        tax_amount: taxAmount,
+        notes: invoiceForm.notes.trim() || null,
+        items: validItems,
+      });
+
+      setInvoiceForm({
+        invoice_number: "",
+        customer_id: "",
+        invoice_date: new Date().toISOString().slice(0, 10),
+        due_date: "",
+        tax_amount: "0",
+        notes: "",
+      });
+
+      setInvoiceItems([
+        { product_id: "", quantity: "1", unit_price: "0" },
+      ]);
+
+      setSuccess("Sales invoice created successfully. Stock and accounting records updated.");
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to create sales invoice.",
       );
     } finally {
       setSaving(false);
@@ -615,6 +917,7 @@ function ModulePage({ section }: { section: Section }) {
   );
 
   const isInventory = section === "Inventory";
+  const isSales = section === "Sales";
   const isParty = section === "Customers" || section === "Suppliers";
   const partyLabel = section === "Customers" ? "Customer" : "Supplier";
 
@@ -627,6 +930,376 @@ function ModulePage({ section }: { section: Section }) {
           <p>Manage and review your business records.</p>
         </div>
       </div>
+            {section === "Sales" && (
+        <section className="panel inventory-create-panel sales-invoice-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Create Sales Invoice</h2>
+              <p>Create an invoice for a customer and record the products sold.</p>
+            </div>
+          </div>
+
+          <form className="inventory-form" onSubmit={createSalesInvoice}>
+            <div className="inventory-form-grid">
+              <label>
+                Invoice Number *
+                <input
+                  required
+                  maxLength={40}
+                  value={invoiceForm.invoice_number}
+                  onChange={(event) =>
+                    setInvoiceForm({
+                      ...invoiceForm,
+                      invoice_number: event.target.value,
+                    })
+                  }
+                  placeholder="e.g. INV-2026-001"
+                />
+              </label>
+
+              <label>
+                Customer *
+                <select
+                  required
+                  value={invoiceForm.customer_id}
+                  onChange={(event) =>
+                    setInvoiceForm({
+                      ...invoiceForm,
+                      customer_id: event.target.value,
+                    })
+                  }
+                >
+                  <option value="">Select customer</option>
+                  {salesCustomers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Invoice Date *
+                <input
+                  type="date"
+                  required
+                  value={invoiceForm.invoice_date}
+                  onChange={(event) =>
+                    setInvoiceForm({
+                      ...invoiceForm,
+                      invoice_date: event.target.value,
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                Due Date
+                <input
+                  type="date"
+                  value={invoiceForm.due_date}
+                  min={invoiceForm.invoice_date}
+                  onChange={(event) =>
+                    setInvoiceForm({
+                      ...invoiceForm,
+                      due_date: event.target.value,
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                Tax Amount (PKR)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={invoiceForm.tax_amount}
+                  onChange={(event) =>
+                    setInvoiceForm({
+                      ...invoiceForm,
+                      tax_amount: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="panel-heading">
+              <div>
+                <h3>Invoice Items</h3>
+                <p>Select products, quantities, and selling prices.</p>
+              </div>
+
+              <button type="button" onClick={addInvoiceItem}>
+                Add Item
+              </button>
+            </div>
+
+            {invoiceItems.map((item, index) => (
+              <div
+                className="inventory-form-grid sales-invoice-item-row"
+                key={index}
+              >
+                <label>
+                  Product *
+                  <select
+                    required
+                    value={item.product_id}
+                    onChange={(event) => {
+                      const product = salesProducts.find(
+                        (entry) => entry.id === Number(event.target.value),
+                      );
+
+                      updateInvoiceItem(
+                        index,
+                        "product_id",
+                        event.target.value,
+                      );
+
+                      if (product) {
+                        updateInvoiceItem(
+                          index,
+                          "unit_price",
+                          String(product.selling_price ?? 0),
+                        );
+                      }
+                    }}
+                  >
+                    <option value="">Select product</option>
+                    {salesProducts.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name} — Stock:{" "}
+                        {product.current_stock ?? product.quantity_on_hand ?? 0}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Quantity *
+                  <input
+                    type="number"
+                    min="0.001"
+                    step="0.001"
+                    required
+                    value={item.quantity}
+                    onChange={(event) =>
+                      updateInvoiceItem(index, "quantity", event.target.value)
+                    }
+                  />
+                </label>
+
+                <label>
+                  Unit Price (PKR) *
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={item.unit_price}
+                    onChange={(event) =>
+                      updateInvoiceItem(index, "unit_price", event.target.value)
+                    }
+                  />
+                </label>
+
+                <div className="inventory-form-actions">
+                  <button
+                    type="button"
+                    className="sales-remove-button"
+                    disabled={invoiceItems.length === 1}
+                    onClick={() => removeInvoiceItem(index)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <label>
+              Notes
+              <textarea
+                value={invoiceForm.notes}
+                onChange={(event) =>
+                  setInvoiceForm({
+                    ...invoiceForm,
+                    notes: event.target.value,
+                  })
+                }
+                placeholder="Optional invoice notes..."
+                rows={3}
+              />
+            </label>
+
+            <div className="panel-heading">
+              <div>
+                <div className="sales-invoice-totals">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{formatPKR(invoiceSubtotal)}</strong>
+                </div>
+                <div>
+                  <span>Tax</span>
+                  <strong>{formatPKR(invoiceTax)}</strong>
+                </div>
+                <div className="sales-invoice-grand-total">
+                  <span>Grand Total</span>
+                  <strong>{formatPKR(invoiceTotal)}</strong>
+                </div>
+              </div>
+              </div>
+            </div>
+
+            <div className="inventory-form-actions">
+              <button type="submit" disabled={saving}>
+                {saving ? "Creating Invoice..." : "Create Sales Invoice"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+            {isSales && (
+        <section className="panel inventory-create-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Record Customer Payment</h2>
+              <p>Record cash or bank payments against outstanding sales invoices.</p>
+            </div>
+          </div>
+
+          <form className="inventory-form" onSubmit={recordCustomerPayment}>
+            <div className="inventory-form-grid">
+              <label>
+                Sales Invoice *
+                <select
+                  required
+                  value={paymentForm.invoice_id}
+                  onChange={(event) => {
+                    setPaymentForm({
+                      ...paymentForm,
+                      invoice_id: event.target.value,
+                      amount: "",
+                    });
+                  }}
+                >
+                  <option value="">Select outstanding invoice</option>
+                  {outstandingInvoices.map((invoice) => {
+                    const customer = salesCustomers.find(
+                      (item) => Number(item.id) === Number(invoice.customer_id),
+                    );
+
+                    return (
+                      <option key={invoice.id} value={invoice.id}>
+                        {invoice.invoice_number} — {customer?.name ?? "Customer"} — Outstanding: {formatPKR(getInvoiceOutstanding(invoice))}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label>
+                Payment Date *
+                <input
+                  type="date"
+                  required
+                  value={paymentForm.payment_date}
+                  onChange={(event) =>
+                    setPaymentForm({ ...paymentForm, payment_date: event.target.value })
+                  }
+                />
+              </label>
+
+              <label>
+                Payment Amount (PKR) *
+                <input
+                  type="number"
+                  required
+                  min="0.01"
+                  step="0.01"
+                  max={selectedPaymentInvoice ? getInvoiceOutstanding(selectedPaymentInvoice) : undefined}
+                  value={paymentForm.amount}
+                  onChange={(event) =>
+                    setPaymentForm({ ...paymentForm, amount: event.target.value })
+                  }
+                  placeholder="Enter payment amount"
+                />
+              </label>
+
+              <label>
+                Payment Method *
+                <select
+                  value={paymentForm.payment_method}
+                  onChange={(event) =>
+                    setPaymentForm({
+                      ...paymentForm,
+                      payment_method: event.target.value,
+                      account_id: "",
+                    })
+                  }
+                >
+                  <option value="cash">Cash</option>
+                  <option value="bank">Bank</option>
+                </select>
+              </label>
+
+              <label>
+                {paymentForm.payment_method === "cash" ? "Cash Account *" : "Bank Account *"}
+                <select
+                  required
+                  value={paymentForm.account_id}
+                  onChange={(event) =>
+                    setPaymentForm({ ...paymentForm, account_id: event.target.value })
+                  }
+                >
+                  <option value="">Select account</option>
+                  {selectedPaymentAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {paymentForm.payment_method === "cash"
+                        ? account.name
+                        : `${account.name} — ${account.bank_name} (${account.account_number})`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Reference (Optional)
+                <input
+                  maxLength={100}
+                  value={paymentForm.reference}
+                  onChange={(event) =>
+                    setPaymentForm({ ...paymentForm, reference: event.target.value })
+                  }
+                  placeholder="Receipt or transaction reference"
+                />
+              </label>
+            </div>
+
+            {selectedPaymentInvoice && (
+              <p>
+                Outstanding balance: <strong>{formatPKR(getInvoiceOutstanding(selectedPaymentInvoice))}</strong>
+              </p>
+            )}
+
+            {outstandingInvoices.length === 0 && (
+              <p className="empty-state">
+                No outstanding sales invoices available for payment.
+              </p>
+            )}
+
+            <div className="inventory-form-actions">
+              <button
+                type="submit"
+                disabled={saving || outstandingInvoices.length === 0}
+              >
+                {saving ? "Recording Payment..." : "Record Customer Payment"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
           {isParty && (
         <section className="panel inventory-create-panel">
           <div className="panel-heading">
@@ -912,9 +1585,137 @@ function ModulePage({ section }: { section: Section }) {
               <div className="empty-state">No products found.</div>
             )}
           </div>
+        
+        ) : isSales ? (
+          <>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Invoice Number</th>
+                  <th>Customer</th>
+                  <th>Invoice Date</th>
+                  <th>Due Date</th>
+                  <th>Subtotal</th>
+                  <th>Tax</th>
+                  <th>Grand Total</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((invoice) => {
+                  const customer = salesCustomers.find(
+                    (item) => Number(item.id) === Number(invoice.customer_id),
+                  );
+
+                  return (
+                    <tr key={invoice.id}>
+                      <td>{invoice.invoice_number}</td>
+                      <td>
+                        {customer?.name ??
+                          invoice.customer?.name ??
+                          `Customer #${invoice.customer_id}`}
+                      </td>
+                      <td>{invoice.invoice_date ?? "—"}</td>
+                      <td>{invoice.due_date ?? "—"}</td>
+                      <td>{formatPKR(invoice.subtotal ?? 0)}</td>
+                      <td>{formatPKR(invoice.tax_amount ?? 0)}</td>
+                      <td>{formatPKR(invoice.total_amount ?? 0)}</td>
+                      <td>
+                        <span className={`status-badge status-${String(invoice.status ?? "unknown").toLowerCase()}`}>
+                          {invoice.status ?? "Unknown"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            
+            {filteredRows.length === 0 && (
+              <div className="empty-state">
+                No sales invoices found. Create your first invoice using the form above.
+              </div>
+            )}
+          </div>
+
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Customer Payment History</h2>
+                <p>View payments received against sales invoices.</p>
+              </div>
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Payment Date</th>
+                    <th>Invoice Number</th>
+                    <th>Customer</th>
+                    <th>Method</th>
+                    <th>Account</th>
+                    <th>Reference</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesPayments.map((payment) => {
+                    const invoice = rows.find(
+                      (item) => Number(item.id) === Number(payment.invoice_id),
+                    );
+
+                    const customer = salesCustomers.find(
+                      (item) =>
+                        Number(item.id) === Number(invoice?.customer_id),
+                    );
+
+                    const account =
+                      payment.payment_method === "cash"
+                        ? cashAccounts.find(
+                            (item) =>
+                              Number(item.id) === Number(payment.cash_account_id),
+                          )
+                        : bankAccounts.find(
+                            (item) =>
+                              Number(item.id) === Number(payment.bank_account_id),
+                          );
+
+                    return (
+                      <tr key={payment.id}>
+                        <td>{payment.payment_date ?? "—"}</td>
+                        <td>
+                          {invoice?.invoice_number ??
+                            `Invoice #${payment.invoice_id}`}
+                        </td>
+                        <td>{customer?.name ?? "—"}</td>
+                        <td>
+                          {payment.payment_method === "cash" ? "Cash" : "Bank"}
+                        </td>
+                        <td>{account?.name ?? "—"}</td>
+                        <td>{payment.reference ?? "—"}</td>
+                        <td>{formatPKR(payment.amount ?? 0)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {salesPayments.length === 0 && (
+                <div className="empty-state">
+                  No customer payments recorded yet.
+                </div>
+              )}
+            </div>
+          </section>
+          </>
         ) : (
+
           <RecordsTable rows={filteredRows} />
         )}
+
 
         {isInventory && editProduct && (
           <section className="panel inventory-create-panel">
@@ -1100,7 +1901,7 @@ function ModulePage({ section }: { section: Section }) {
         </div>
       </section>
 
-      {!isInventory && (
+      {!isInventory && !isParty && (
         <div className="info-note">
           <CircleHelp size={17} />
           This screen currently displays records from your backend. Create and edit forms

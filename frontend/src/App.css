@@ -1644,3 +1644,184 @@ button {
     width: 100%;
   }
 }
+/* =========================================
+   SALES INVOICE FORM
+========================================= */
+
+.sales-invoice-panel {
+  width: 100%;
+  padding: 24px;
+  margin-bottom: 22px;
+  background: linear-gradient(145deg, #142139, #101a2d);
+  border: 1px solid #293951;
+  border-radius: 14px;
+}
+
+.sales-invoice-panel .inventory-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sales-invoice-panel .inventory-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.sales-invoice-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  color: #b9c7da;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sales-invoice-panel input,
+.sales-invoice-panel select,
+.sales-invoice-panel textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 43px;
+  padding: 11px 13px;
+  color: #e8edf7;
+  background: #0c1729;
+  border: 1px solid #34445b;
+  border-radius: 8px;
+  outline: none;
+  font-family: inherit;
+  font-size: 12px;
+  color-scheme: dark;
+}
+
+.sales-invoice-panel select {
+  cursor: pointer;
+}
+
+.sales-invoice-panel textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.sales-invoice-panel input:focus,
+.sales-invoice-panel select:focus,
+.sales-invoice-panel textarea:focus {
+  border-color: #5ce0b7;
+  box-shadow: 0 0 0 3px rgba(92, 224, 183, 0.1);
+}
+
+.sales-invoice-panel input::placeholder,
+.sales-invoice-panel textarea::placeholder {
+  color: #65758e;
+}
+
+.sales-invoice-panel .sales-invoice-item-row {
+  grid-template-columns: minmax(0, 1.6fr) minmax(100px, 0.7fr) minmax(130px, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  padding: 16px;
+  background: #0c1729;
+  border: 1px solid #293951;
+  border-radius: 10px;
+}
+
+.sales-invoice-panel .sales-invoice-item-row .inventory-form-actions {
+  margin: 0;
+}
+
+.sales-invoice-panel .sales-remove-button {
+  min-height: 42px;
+  padding: 0 15px;
+  color: #ffb4bd;
+  background: #38212d;
+  border: 1px solid #633746;
+  border-radius: 8px;
+}
+
+.sales-invoice-panel .sales-remove-button:hover:not(:disabled) {
+  background: #4b2937;
+}
+
+.sales-invoice-panel .sales-remove-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sales-invoice-panel .panel-heading {
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 12px;
+}
+
+.sales-invoice-panel .inventory-form-actions button {
+  min-height: 43px;
+}
+
+@media (max-width: 900px) {
+  .sales-invoice-panel .sales-invoice-item-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .sales-invoice-panel {
+    padding: 16px;
+  }
+
+  .sales-invoice-panel .inventory-form-grid,
+  .sales-invoice-panel .sales-invoice-item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sales-invoice-panel .sales-invoice-item-row .inventory-form-actions {
+    justify-content: flex-start;
+  }
+
+  .sales-invoice-panel .panel-heading {
+    align-items: flex-start;
+  }
+}
+
+.sales-invoice-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.sales-invoice-totals > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 15px;
+  background: #0c1729;
+  border: 1px solid #293951;
+  border-radius: 10px;
+}
+
+.sales-invoice-totals span {
+  color: #91a2ba;
+  font-size: 11px;
+}
+
+.sales-invoice-totals strong {
+  color: #e8edf7;
+  font-size: 16px;
+}
+
+.sales-invoice-totals .sales-invoice-grand-total {
+  border-color: #326b5d;
+  background: #14352e;
+}
+
+.sales-invoice-grand-total strong {
+  color: #5ce0b7;
+}
+
+@media (max-width: 600px) {
+  .sales-invoice-totals {
+    grid-template-columns: 1fr;
+  }
+}
