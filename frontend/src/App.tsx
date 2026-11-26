@@ -360,7 +360,32 @@ function ModulePage({ section }: { section: Section }) {
     account_id: "",
     reference: "",
   });
+    // Purchase bill and supplier payment data
+  const [purchaseSuppliers, setPurchaseSuppliers] = useState<any[]>([]);
+  const [purchaseProducts, setPurchaseProducts] = useState<any[]>([]);
+  const [purchasePayments, setPurchasePayments] = useState<any[]>([]);
 
+  const [purchaseForm, setPurchaseForm] = useState({
+    bill_number: "",
+    supplier_id: "",
+    bill_date: new Date().toISOString().slice(0, 10),
+    due_date: "",
+    tax_amount: "0",
+    notes: "",
+  });
+
+  const [purchaseItems, setPurchaseItems] = useState<
+    { product_id: string; quantity: string; unit_cost: string }[]
+  >([{ product_id: "", quantity: "1", unit_cost: "0" }]);
+
+  const [supplierPaymentForm, setSupplierPaymentForm] = useState({
+    bill_id: "",
+    payment_date: new Date().toISOString().slice(0, 10),
+    amount: "",
+    payment_method: "cash",
+    account_id: "",
+    reference: "",
+  });
   const [editForm, setEditForm] = useState({
     sku: "",
     name: "",
@@ -392,6 +417,16 @@ function ModulePage({ section }: { section: Section }) {
     phone: "",
     email: "",
     address: "",
+    opening_balance: "0",
+  });
+    const [bankForm, setBankForm] = useState({
+    name: "",
+    bank_name: "",
+    account_number: "",
+    opening_balance: "0",
+  });
+    const [cashForm, setCashForm] = useState({
+    name: "",
     opening_balance: "0",
   });
   const loadRecords = useCallback(async () => {
@@ -460,6 +495,51 @@ function ModulePage({ section }: { section: Section }) {
     }
 
     void loadSalesOptions();
+  }, [section]);
+    useEffect(() => {
+    if (section !== "Purchases") return;
+
+    async function loadPurchaseOptions() {
+      try {
+        const [
+          suppliersResult,
+          productsResult,
+          paymentsResult,
+          cashResult,
+          bankResult,
+        ] = await Promise.all([
+          apiGet<any>("/api/parties/suppliers"),
+          apiGet<any>("/api/inventory/products"),
+          apiGet<any>("/api/purchases/payments"),
+          apiGet<any>("/api/cash/accounts"),
+          apiGet<any>("/api/bank/accounts"),
+        ]);
+
+        setPurchaseSuppliers(
+          asArray(suppliersResult).filter(
+            (supplier: any) => supplier.is_active !== false,
+          ),
+        );
+
+        setPurchaseProducts(
+          asArray(productsResult).filter(
+            (product: any) => product.is_active !== false,
+          ),
+        );
+
+        setPurchasePayments(asArray(paymentsResult));
+        setCashAccounts(asArray(cashResult));
+        setBankAccounts(asArray(bankResult));
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load purchase and supplier payment information.",
+        );
+      }
+    }
+
+    void loadPurchaseOptions();
   }, [section]);
   async function createProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -569,6 +649,40 @@ function ModulePage({ section }: { section: Section }) {
       invoice.status !== "cancelled" &&
       getInvoiceOutstanding(invoice) > 0,
   );
+    const isPurchases = section === "Purchases";
+
+  const getBillOutstanding = (bill: any) => {
+    const paid = purchasePayments
+      .filter((payment) => Number(payment.bill_id) === Number(bill.id))
+      .reduce(
+        (total, payment) => total + Number(payment.amount ?? 0),
+        0,
+      );
+
+    return Math.max(0, Number(bill.total_amount ?? 0) - paid);
+  };
+
+  const outstandingBills = rows.filter(
+    (bill) =>
+      bill.status !== "cancelled" &&
+      getBillOutstanding(bill) > 0,
+  );
+
+  const selectedPaymentBill = outstandingBills.find(
+    (bill) => Number(bill.id) === Number(supplierPaymentForm.bill_id),
+  );
+
+  const selectedSupplierPaymentAccounts =
+    supplierPaymentForm.payment_method === "cash"
+      ? cashAccounts
+      : bankAccounts;
+
+  const purchaseSubtotal = purchaseItems.reduce((total, item) => {
+    return total + Number(item.quantity || 0) * Number(item.unit_cost || 0);
+  }, 0);
+
+  const purchaseTax = Number(purchaseForm.tax_amount) || 0;
+  const purchaseTotal = purchaseSubtotal + purchaseTax;
 
   const selectedPaymentInvoice = outstandingInvoices.find(
     (invoice) => Number(invoice.id) === Number(paymentForm.invoice_id),
@@ -578,6 +692,228 @@ function ModulePage({ section }: { section: Section }) {
     paymentForm.payment_method === "cash" ? cashAccounts : bankAccounts;
   const invoiceTax = Number(invoiceForm.tax_amount) || 0;
   const invoiceTotal = invoiceSubtotal + invoiceTax;
+    function updatePurchaseItem(
+    index: number,
+    field: "product_id" | "quantity" | "unit_cost",
+    value: string,
+  ) {
+    setPurchaseItems((current) =>
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+
+        const updated = { ...item, [field]: value };
+
+        if (field === "product_id") {
+          const product = purchaseProducts.find(
+            (entry) => Number(entry.id) === Number(value),
+          );
+
+          if (product) {
+            updated.unit_cost = String(
+              product.average_cost ?? product.purchase_price ?? 0,
+            );
+          }
+        }
+
+        return updated;
+      }),
+    );
+  }
+
+  function addPurchaseItem() {
+    setPurchaseItems((current) => [
+      ...current,
+      { product_id: "", quantity: "1", unit_cost: "0" },
+    ]);
+  }
+
+  function removePurchaseItem(index: number) {
+    setPurchaseItems((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+  }
+
+  async function createPurchaseBill(
+    event: React.FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    if (!purchaseForm.bill_number.trim() || !purchaseForm.supplier_id) {
+      setError("Bill number and supplier are required.");
+      return;
+    }
+
+    if (
+      purchaseForm.due_date &&
+      purchaseForm.due_date < purchaseForm.bill_date
+    ) {
+      setError("Due date cannot be earlier than bill date.");
+      return;
+    }
+
+    if (
+      purchaseItems.some(
+        (item) =>
+          !item.product_id ||
+          Number(item.quantity) <= 0 ||
+          Number(item.unit_cost) < 0,
+      )
+    ) {
+      setError("Select a product and enter valid quantity and unit cost for every item.");
+      return;
+    }
+
+    if (purchaseSubtotal <= 0 || purchaseTax < 0) {
+      setError("Purchase subtotal must be greater than zero and tax cannot be negative.");
+      return;
+    }
+
+    const supplier = purchaseSuppliers.find(
+      (entry) => Number(entry.id) === Number(purchaseForm.supplier_id),
+    );
+
+    if (
+      !window.confirm(
+        `Create purchase bill ${purchaseForm.bill_number.trim()} for ${formatPKR(purchaseTotal)}?\\n\\nThis will increase inventory stock, update weighted-average costs, create Accounts Payable, and post accounting journal entries. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/purchases/bills", {
+        bill_number: purchaseForm.bill_number.trim(),
+        supplier_id: Number(purchaseForm.supplier_id),
+        bill_date: purchaseForm.bill_date,
+        due_date: purchaseForm.due_date || null,
+        tax_amount: purchaseTax,
+        notes: purchaseForm.notes.trim() || null,
+        items: purchaseItems.map((item) => ({
+          product_id: Number(item.product_id),
+          quantity: Number(item.quantity),
+          unit_cost: Number(item.unit_cost),
+        })),
+      });
+
+      setSuccess(
+        `Purchase bill ${purchaseForm.bill_number.trim()} created successfully${supplier ? ` for ${supplier.name}` : ""}.`,
+      );
+
+      setPurchaseForm({
+        bill_number: "",
+        supplier_id: "",
+        bill_date: new Date().toISOString().slice(0, 10),
+        due_date: "",
+        tax_amount: "0",
+        notes: "",
+      });
+
+      setPurchaseItems([
+        { product_id: "", quantity: "1", unit_cost: "0" },
+      ]);
+
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to create purchase bill.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+    async function recordSupplierPayment(
+    event: React.FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const bill = selectedPaymentBill;
+    const amount = Number(supplierPaymentForm.amount);
+    const accountId = Number(supplierPaymentForm.account_id);
+
+    if (!bill) {
+      setError("Please select an outstanding purchase bill.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid payment amount.");
+      return;
+    }
+
+    const outstanding = getBillOutstanding(bill);
+
+    if (amount > outstanding) {
+      setError(
+        `Payment cannot exceed the outstanding balance of ${formatPKR(outstanding)}.`,
+      );
+      return;
+    }
+
+    const account = selectedSupplierPaymentAccounts.find(
+      (entry) => Number(entry.id) === accountId,
+    );
+
+    if (!account) {
+      setError("Please select an active cash or bank account.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Record supplier payment of ${formatPKR(amount)} for bill ${bill.bill_number}?\n\nThis will reduce Accounts Payable and credit the selected ${supplierPaymentForm.payment_method} account. Accounting journal entries will be posted. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/purchases/payments", {
+        bill_id: Number(supplierPaymentForm.bill_id),
+        payment_date: supplierPaymentForm.payment_date,
+        amount,
+        payment_method: supplierPaymentForm.payment_method,
+        bank_account_id:
+          supplierPaymentForm.payment_method === "bank" ? accountId : null,
+        cash_account_id:
+          supplierPaymentForm.payment_method === "cash" ? accountId : null,
+        reference: supplierPaymentForm.reference.trim() || null,
+      });
+
+      setSuccess(
+        `Supplier payment of ${formatPKR(amount)} recorded successfully.`,
+      );
+
+      setSupplierPaymentForm({
+        bill_id: "",
+        payment_date: new Date().toISOString().slice(0, 10),
+        amount: "",
+        payment_method: "cash",
+        account_id: "",
+        reference: "",
+      });
+
+      const paymentsResult = await apiGet<any>("/api/purchases/payments");
+      setPurchasePayments(asArray(paymentsResult));
+
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to record supplier payment.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
   async function recordCustomerPayment(
     event: React.FormEvent<HTMLFormElement>,
   ) {
@@ -825,7 +1161,112 @@ function ModulePage({ section }: { section: Section }) {
       setSaving(false);
     }
   }
+    async function createBankAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
 
+    const name = bankForm.name.trim();
+    const bankName = bankForm.bank_name.trim();
+    const accountNumber = bankForm.account_number.trim();
+    const openingBalance = Number(bankForm.opening_balance);
+
+    if (
+      name.length < 2 ||
+      bankName.length < 2 ||
+      accountNumber.length < 3 ||
+      !Number.isFinite(openingBalance) ||
+      openingBalance < 0
+    ) {
+      setError("Please enter valid bank account details.");
+      return;
+    }
+
+    if (
+      openingBalance > 0 &&
+      !window.confirm(
+        `Opening balance ${formatPKR(openingBalance)} will be recorded and may create a journal entry. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/bank/accounts", {
+        name,
+        bank_name: bankName,
+        account_number: accountNumber,
+        opening_balance: openingBalance,
+      });
+
+      setBankForm({
+        name: "",
+        bank_name: "",
+        account_number: "",
+        opening_balance: "0",
+      });
+
+      setSuccess("Bank account created successfully.");
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to create bank account.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+    async function createCashAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const name = cashForm.name.trim();
+    const openingBalance = Number(cashForm.opening_balance);
+
+    if (
+      name.length < 2 ||
+      !Number.isFinite(openingBalance) ||
+      openingBalance < 0
+    ) {
+      setError("Please enter a valid cash account name and opening balance.");
+      return;
+    }
+
+    if (
+      openingBalance > 0 &&
+      !window.confirm(
+        `Opening balance ${formatPKR(openingBalance)} will be recorded and may create a journal entry. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/api/cash/accounts", {
+        name,
+        opening_balance: openingBalance,
+      });
+
+      setCashForm({
+        name: "",
+        opening_balance: "0",
+      });
+
+      setSuccess("Cash account created successfully.");
+      await loadRecords();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to create cash account.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
   async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editProduct) return;
@@ -930,6 +1371,174 @@ function ModulePage({ section }: { section: Section }) {
           <p>Manage and review your business records.</p>
         </div>
       </div>
+            {section === "Banking" && (
+        <section className="panel inventory-create-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Add Bank Account</h2>
+              <p>
+                Register a business bank account and enter its opening balance.
+              </p>
+            </div>
+          </div>
+
+          <form className="inventory-form" onSubmit={createBankAccount}>
+            <div className="inventory-form-grid">
+              <label>
+                Account Name *
+                <input
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  value={bankForm.name}
+                  onChange={(event) =>
+                    setBankForm({
+                      ...bankForm,
+                      name: event.target.value,
+                    })
+                  }
+                  placeholder="e.g. HBL - Business Current Account"
+                />
+              </label>
+
+              <label>
+                Bank Name *
+                <input
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  value={bankForm.bank_name}
+                  onChange={(event) =>
+                    setBankForm({
+                      ...bankForm,
+                      bank_name: event.target.value,
+                    })
+                  }
+                  placeholder="e.g. HBL"
+                />
+              </label>
+
+              <label>
+                Account Number *
+                <input
+                  required
+                  minLength={3}
+                  maxLength={50}
+                  value={bankForm.account_number}
+                  onChange={(event) =>
+                    setBankForm({
+                      ...bankForm,
+                      account_number: event.target.value,
+                    })
+                  }
+                  placeholder="Enter bank account number"
+                />
+              </label>
+
+              <label>
+                Opening Balance (PKR)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={bankForm.opening_balance}
+                  onChange={(event) =>
+                    setBankForm({
+                      ...bankForm,
+                      opening_balance: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="inventory-form-actions">
+              <button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Add Bank Account"}
+              </button>
+            </div>
+
+            {success && (
+              <div className="success-message">
+                {success}
+              </div>
+            )}
+
+            {error && (
+              <div className="error-message">
+                <AlertCircle size={18} />
+                <p>{error}</p>
+              </div>
+            )}
+          </form>
+        </section>
+      )}
+            {section === "Cash" && (
+        <section className="panel inventory-create-panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Add Cash Account</h2>
+              <p>
+                Create a cash account and enter its opening balance.
+              </p>
+            </div>
+          </div>
+
+          <form className="inventory-form" onSubmit={createCashAccount}>
+            <div className="inventory-form-grid">
+              <label>
+                Cash Account Name *
+                <input
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  value={cashForm.name}
+                  onChange={(event) =>
+                    setCashForm({
+                      ...cashForm,
+                      name: event.target.value,
+                    })
+                  }
+                  placeholder="e.g. Main Cash Account"
+                />
+              </label>
+
+              <label>
+                Opening Balance (PKR)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={cashForm.opening_balance}
+                  onChange={(event) =>
+                    setCashForm({
+                      ...cashForm,
+                      opening_balance: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="inventory-form-actions">
+              <button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Add Cash Account"}
+              </button>
+            </div>
+
+            {success && <p className="inventory-success">{success}</p>}
+
+            {error && (
+              <div className="error-message">
+                <AlertCircle size={18} />
+                <p>{error}</p>
+              </div>
+            )}
+          </form>
+        </section>
+      )}
             {section === "Sales" && (
         <section className="panel inventory-create-panel sales-invoice-panel">
           <div className="panel-heading">
@@ -1300,6 +1909,398 @@ function ModulePage({ section }: { section: Section }) {
           </form>
         </section>
       )}
+            {isPurchases && (
+        <>
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Create Purchase Bill</h2>
+                <p>
+                  Record goods received from a supplier. Stock and Accounts
+                  Payable will be updated automatically.
+                </p>
+              </div>
+            </div>
+
+            <form className="inventory-form" onSubmit={createPurchaseBill}>
+              <div className="inventory-form-grid">
+                <label>
+                  Bill Number *
+                  <input
+                    required
+                    maxLength={40}
+                    value={purchaseForm.bill_number}
+                    onChange={(event) =>
+                      setPurchaseForm({
+                        ...purchaseForm,
+                        bill_number: event.target.value,
+                      })
+                    }
+                    placeholder="e.g. PB-001"
+                  />
+                </label>
+
+                <label>
+                  Supplier *
+                  <select
+                    required
+                    value={purchaseForm.supplier_id}
+                    onChange={(event) =>
+                      setPurchaseForm({
+                        ...purchaseForm,
+                        supplier_id: event.target.value,
+                      })
+                    }
+                  >
+                    <option value="">Select supplier</option>
+                    {purchaseSuppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Bill Date *
+                  <input
+                    type="date"
+                    required
+                    value={purchaseForm.bill_date}
+                    onChange={(event) =>
+                      setPurchaseForm({
+                        ...purchaseForm,
+                        bill_date: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  Due Date
+                  <input
+                    type="date"
+                    min={purchaseForm.bill_date}
+                    value={purchaseForm.due_date}
+                    onChange={(event) =>
+                      setPurchaseForm({
+                        ...purchaseForm,
+                        due_date: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  Tax Amount (PKR)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={purchaseForm.tax_amount}
+                    onChange={(event) =>
+                      setPurchaseForm({
+                        ...purchaseForm,
+                        tax_amount: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="panel-heading purchase-items-heading">
+                <div>
+                  <h3>Purchase Items</h3>
+                  <p>Add the products and quantities received.</p>
+                </div>
+                <button
+                  type="button"
+                  className="purchase-add-item-btn"
+                  onClick={addPurchaseItem}
+                >
+                  + Add Item
+                </button>
+              </div>
+
+              {purchaseItems.map((item, index) => (
+                <div className="inventory-form-grid purchase-item-row" key={index}>
+                  <label>
+                    Product *
+                    <select
+                      required
+                      value={item.product_id}
+                      onChange={(event) =>
+                        updatePurchaseItem(
+                          index,
+                          "product_id",
+                          event.target.value,
+                        )
+                      }
+                    >
+                      <option value="">Select product</option>
+                      {purchaseProducts.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name} ({product.sku})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Quantity *
+                    <input
+                      type="number"
+                      required
+                      min="0.001"
+                      step="0.001"
+                      value={item.quantity}
+                      onChange={(event) =>
+                        updatePurchaseItem(
+                          index,
+                          "quantity",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Unit Cost (PKR) *
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      step="0.01"
+                      value={item.unit_cost}
+                      onChange={(event) =>
+                        updatePurchaseItem(
+                          index,
+                          "unit_cost",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </label>
+
+                  <div className="inventory-form-actions">
+                    <button
+                      type="button"
+                      disabled={purchaseItems.length === 1}
+                      onClick={() => removePurchaseItem(index)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <label className="inventory-description purchase-notes-field">
+                Notes
+                <textarea
+                  rows={3}
+                  value={purchaseForm.notes}
+                  onChange={(event) =>
+                    setPurchaseForm({
+                      ...purchaseForm,
+                      notes: event.target.value,
+                    })
+                  }
+                  placeholder="Optional purchase notes..."
+                />
+              </label>
+
+              <div className="sales-invoice-totals">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{formatPKR(purchaseSubtotal)}</strong>
+                </div>
+                <div>
+                  <span>Tax</span>
+                  <strong>{formatPKR(purchaseTax)}</strong>
+                </div>
+                <div className="sales-invoice-grand-total">
+                  <span>Grand Total</span>
+                  <strong>{formatPKR(purchaseTotal)}</strong>
+                </div>
+              </div>
+
+              <div className="inventory-form-actions">
+                <button type="submit" disabled={saving}>
+                  {saving ? "Creating Purchase Bill..." : "Create Purchase Bill"}
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel inventory-create-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Record Supplier Payment</h2>
+                <p>
+                  Record cash or bank payments against outstanding purchase
+                  bills.
+                </p>
+              </div>
+            </div>
+
+            <form
+              className="inventory-form"
+              onSubmit={recordSupplierPayment}
+            >
+              <div className="inventory-form-grid">
+                <label>
+                  Purchase Bill *
+                  <select
+                    required
+                    value={supplierPaymentForm.bill_id}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        bill_id: event.target.value,
+                        amount: "",
+                      })
+                    }
+                  >
+                    <option value="">Select outstanding bill</option>
+                    {outstandingBills.map((bill) => {
+                      const supplier = purchaseSuppliers.find(
+                        (item) =>
+                          Number(item.id) === Number(bill.supplier_id),
+                      );
+
+                      return (
+                        <option key={bill.id} value={bill.id}>
+                          {bill.bill_number} — {supplier?.name ?? "Supplier"} —
+                          Outstanding: {formatPKR(getBillOutstanding(bill))}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+
+                <label>
+                  Payment Date *
+                  <input
+                    type="date"
+                    required
+                    value={supplierPaymentForm.payment_date}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        payment_date: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  Payment Amount (PKR) *
+                  <input
+                    type="number"
+                    required
+                    min="0.01"
+                    step="0.01"
+                    max={
+                      selectedPaymentBill
+                        ? getBillOutstanding(selectedPaymentBill)
+                        : undefined
+                    }
+                    value={supplierPaymentForm.amount}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        amount: event.target.value,
+                      })
+                    }
+                    placeholder="Enter payment amount"
+                  />
+                </label>
+
+                <label>
+                  Payment Method *
+                  <select
+                    value={supplierPaymentForm.payment_method}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        payment_method: event.target.value,
+                        account_id: "",
+                      })
+                    }
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank</option>
+                  </select>
+                </label>
+
+                <label>
+                  {supplierPaymentForm.payment_method === "cash"
+                    ? "Cash Account *"
+                    : "Bank Account *"}
+                  <select
+                    required
+                    value={supplierPaymentForm.account_id}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        account_id: event.target.value,
+                      })
+                    }
+                  >
+                    <option value="">Select account</option>
+                    {selectedSupplierPaymentAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {supplierPaymentForm.payment_method === "cash"
+                          ? account.name
+                          : `${account.name} — ${account.bank_name} (${account.account_number})`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Reference (Optional)
+                  <input
+                    maxLength={100}
+                    value={supplierPaymentForm.reference}
+                    onChange={(event) =>
+                      setSupplierPaymentForm({
+                        ...supplierPaymentForm,
+                        reference: event.target.value,
+                      })
+                    }
+                    placeholder="Payment reference"
+                  />
+                </label>
+              </div>
+
+              {selectedPaymentBill && (
+                <p>
+                  Outstanding balance:{" "}
+                  <strong>
+                    {formatPKR(getBillOutstanding(selectedPaymentBill))}
+                  </strong>
+                </p>
+              )}
+
+              {outstandingBills.length === 0 && (
+                <p className="empty-state">
+                  No outstanding purchase bills available for payment.
+                </p>
+              )}
+
+              <div className="inventory-form-actions">
+                <button
+                  type="submit"
+                  disabled={saving || outstandingBills.length === 0}
+                >
+                  {saving ? "Recording Payment..." : "Record Supplier Payment"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </>
+      )}
           {isParty && (
         <section className="panel inventory-create-panel">
           <div className="panel-heading">
@@ -1586,7 +2587,199 @@ function ModulePage({ section }: { section: Section }) {
             )}
           </div>
         
+        
+                ) : section === "Banking" ? (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account Name</th>
+                  <th>Bank</th>
+                  <th>Account Number</th>
+                  <th>Opening Balance</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((account) => (
+                  <tr key={account.id}>
+                    <td>{account.name}</td>
+                    <td>{account.bank_name}</td>
+                    <td>{account.account_number}</td>
+                    <td>{formatPKR(account.opening_balance)}</td>
+                    <td>
+                      <span
+                        className={
+                          account.is_active
+                            ? "status-badge status-active"
+                            : "status-badge status-inactive"
+                        }
+                      >
+                        {account.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {filteredRows.length === 0 && (
+              <div className="empty-state">No bank accounts found.</div>
+            )}
+          </div>
+                  ) : section === "Cash" ? (
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cash Account Name</th>
+                  <th>Opening Balance</th>
+                  <th>Ledger Account ID</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((account) => (
+                  <tr key={account.id}>
+                    <td>{account.name}</td>
+                    <td>{formatPKR(account.opening_balance)}</td>
+                    <td>{account.ledger_account_id}</td>
+                    <td>
+                      <span
+                        className={
+                          account.is_active
+                            ? "status-badge status-active"
+                            : "status-badge status-inactive"
+                        }
+                      >
+                        {account.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {filteredRows.length === 0 && (
+              <div className="empty-state">No cash accounts found.</div>
+            )}
+          </div>
+        ) : isPurchases ? (
+          <>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bill Number</th>
+                    <th>Supplier</th>
+                    <th>Bill Date</th>
+                    <th>Due Date</th>
+                    <th>Subtotal</th>
+                    <th>Tax</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                    <th>Outstanding</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((bill) => {
+                    const supplier = purchaseSuppliers.find(
+                      (item) => Number(item.id) === Number(bill.supplier_id),
+                    );
+
+                    return (
+                      <tr key={bill.id}>
+                        <td>{bill.bill_number}</td>
+                        <td>{supplier?.name ?? bill.supplier?.name ?? `Supplier #${bill.supplier_id}`}</td>
+                        <td>{bill.bill_date ?? "—"}</td>
+                        <td>{bill.due_date ?? "—"}</td>
+                        <td>{formatPKR(bill.subtotal ?? 0)}</td>
+                        <td>{formatPKR(bill.tax_amount ?? 0)}</td>
+                        <td>{formatPKR(bill.total_amount ?? 0)}</td>
+                        <td>
+                          <span className={`status-badge status-${String(bill.status ?? "unknown").toLowerCase()}`}>
+                            {bill.status ?? "Unknown"}
+                          </span>
+                        </td>
+                        <td>{formatPKR(getBillOutstanding(bill))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {filteredRows.length === 0 && (
+                <div className="empty-state">
+                  No purchase bills found. Create your first purchase bill using the form above.
+                </div>
+              )}
+            </div>
+
+            <section className="panel inventory-create-panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Supplier Payment History</h2>
+                  <p>View payments recorded against purchase bills.</p>
+                </div>
+              </div>
+
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Payment Date</th>
+                      <th>Bill Number</th>
+                      <th>Supplier</th>
+                      <th>Method</th>
+                      <th>Account</th>
+                      <th>Reference</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purchasePayments.map((payment) => {
+                      const bill = rows.find(
+                        (item) => Number(item.id) === Number(payment.bill_id),
+                      );
+
+                      const supplier = purchaseSuppliers.find(
+                        (item) => Number(item.id) === Number(bill?.supplier_id),
+                      );
+
+                      const account =
+                        payment.payment_method === "cash"
+                          ? cashAccounts.find(
+                              (item) => Number(item.id) === Number(payment.cash_account_id),
+                            )
+                          : bankAccounts.find(
+                              (item) => Number(item.id) === Number(payment.bank_account_id),
+                            );
+
+                      return (
+                        <tr key={payment.id}>
+                          <td>{payment.payment_date ?? "—"}</td>
+                          <td>{bill?.bill_number ?? `Bill #${payment.bill_id}`}</td>
+                          <td>{supplier?.name ?? "—"}</td>
+                          <td>{payment.payment_method === "cash" ? "Cash" : "Bank"}</td>
+                          <td>{account?.name ?? "—"}</td>
+                          <td>{payment.reference ?? "—"}</td>
+                          <td>{formatPKR(payment.amount ?? 0)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {purchasePayments.length === 0 && (
+                  <div className="empty-state">
+                    No supplier payments recorded yet.
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
         ) : isSales ? (
+
           <>
           <div className="table-container">
             <table>
@@ -1901,7 +3094,10 @@ function ModulePage({ section }: { section: Section }) {
         </div>
       </section>
 
-      {!isInventory && !isParty && (
+            {!isInventory &&
+        !isParty &&
+        section !== "Banking" &&
+        section !== "Cash" && (
         <div className="info-note">
           <CircleHelp size={17} />
           This screen currently displays records from your backend. Create and edit forms
